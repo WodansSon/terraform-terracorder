@@ -5,10 +5,13 @@
 
 .DESCRIPTION
     This script searches through all test files in the internal/services directory
-    to find tests that use a specified Azure resource name (e.g., azurerm_subnet).
-    It finds tests that use the resource either:
+    of a Terraform provider repository to find tests that use a specified Azure resource
+    name (e.g., azurerm_subnet). It finds tests that use the resource either:
     1. Directly in the test configurations
     2. Via template references by calling template functions that contain the resource
+
+    The script can automatically detect the Terraform provider repository location or
+    you can specify it explicitly using the -RepositoryPath parameter.
 
     This ensures comprehensive test coverage identification when a resource is modified.
 
@@ -33,11 +36,18 @@
 .PARAMETER Summary
     Show a concise summary output with just file names and test functions
 
-.EXAMPLE
-    .\find-resource-tests.ps1 -ResourceName "azurerm_subnet"
+.PARAMETER RepositoryPath
+    Path to the Terraform provider repository root directory (containing internal/services)
+    If not specified, will try to auto-detect from current directory
 
 .EXAMPLE
-    .\find-resource-tests.ps1 -ResourceName "azurerm_subnet" -Summary
+    .\terracorder.ps1 -ResourceName "azurerm_subnet"
+
+.EXAMPLE
+    .\terracorder.ps1 -ResourceName "azurerm_subnet" -Summary
+
+.EXAMPLE
+    .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\terraform-provider-azurerm"
 #>
 
 [CmdletBinding()]
@@ -50,6 +60,7 @@ param(
     [switch]$TestNamesOnly,
     [switch]$TestPrefixes,
     [switch]$Summary,
+    [string]$RepositoryPath,
     [int]$TestConsoleWidth = 0  # For testing progress bar/spinner at different widths
 )
 
@@ -132,12 +143,72 @@ function Test-ResourceNameValid {
 }
 
 function Initialize-Environment {
-    param([string]$ScriptRoot)
+    param(
+        [string]$ScriptRoot,
+        [string]$RepositoryPath
+    )
 
-    $rootDir = Split-Path -Parent $ScriptRoot
-    if (-not (Test-Path "$rootDir\internal\services")) {
-        throw "Could not find internal/services directory. Make sure you're running this from the terraform-provider-azurerm root."
+    $rootDir = $null
+
+    if ($RepositoryPath) {
+        # Use the provided repository path
+        if (-not (Test-Path $RepositoryPath)) {
+            throw "Repository path '$RepositoryPath' does not exist."
+        }
+
+        $rootDir = Resolve-Path $RepositoryPath
+
+        if (-not (Test-Path "$rootDir\internal\services")) {
+            throw "Could not find internal/services directory in '$RepositoryPath'. Make sure this is the terraform-provider-azurerm root directory."
+        }
+    } else {
+        # Try to auto-detect from current directory and script location
+        $searchPaths = @(
+            (Get-Location).Path,
+            $ScriptRoot,
+            (Split-Path -Parent $ScriptRoot)
+        )
+
+        foreach ($searchPath in $searchPaths) {
+            $testPath = Join-Path $searchPath "internal\services"
+            if (Test-Path $testPath) {
+                $rootDir = $searchPath
+                break
+            }
+
+            # Also check parent directories up to 3 levels
+            $currentPath = $searchPath
+            for ($i = 0; $i -lt 3; $i++) {
+                $parentPath = Split-Path -Parent $currentPath
+                if ($parentPath -eq $currentPath) { break }  # Reached root
+
+                $testPath = Join-Path $parentPath "internal\services"
+                if (Test-Path $testPath) {
+                    $rootDir = $parentPath
+                    break
+                }
+                $currentPath = $parentPath
+            }
+
+            if ($rootDir) { break }
+        }
+
+        if (-not $rootDir) {
+            $errorMessage = @"
+Could not find terraform-provider-azurerm repository root directory.
+
+Please specify the repository path using the -RepositoryPath parameter:
+    .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm"
+
+Or run this script from within the terraform-provider-azurerm directory structure.
+
+Searched in:
+"@ + ($searchPaths | ForEach-Object { "`n  - $_" })
+
+            throw $errorMessage
+        }
     }
+
     return $rootDir
 }
 
@@ -368,12 +439,13 @@ function Find-AllTemplateFunctionsWithResource {
         [System.IO.FileInfo[]]$TestFiles,
         [string[]]$Patterns,
         [string]$RootDir,
-        [bool]$ShowProgress
+        [bool]$ShowProgress,
+        [bool]$ShowVerbose = $true
     )
 
     $allTemplateFunctionsWithResource = @{}
 
-    if ($ShowProgress) {
+    if ($ShowVerbose) {
         Write-Host "Phase 1: Finding template functions containing resource..." -ForegroundColor Yellow
     }
 
@@ -405,7 +477,7 @@ function Find-AllTemplateFunctionsWithResource {
                 }
                 $allTemplateFunctionsWithResource[$funcName] += $relativePath
 
-                if ($ShowProgress) {
+                if ($ShowVerbose) {
                     Write-Host "  Found Template: " -ForegroundColor Cyan -NoNewline
                     Write-Host "'$funcName' " -ForegroundColor Magenta -NoNewline
                     Write-Host "containing resource in " -ForegroundColor Gray -NoNewline
@@ -415,7 +487,7 @@ function Find-AllTemplateFunctionsWithResource {
         }
     }
 
-    if ($ShowProgress) {
+    if ($ShowVerbose) {
         $color = if ($allTemplateFunctionsWithResource.Count -eq 0) { "Red" } else { "Yellow" }
         Write-Host "Found $($allTemplateFunctionsWithResource.Count) template/test functions containing the resource" -ForegroundColor $color
         Write-Host ""
@@ -642,12 +714,13 @@ function Invoke-AllTestFiles {
         [hashtable]$AllTemplateFunctionsWithResource,
         [string]$ResourceName,
         [string]$RootDir,
-        [bool]$ShowProgress
+        [bool]$ShowProgress,
+        [bool]$ShowVerbose = $true
     )
 
     $results = @()
 
-    if ($ShowProgress) {
+    if ($ShowVerbose) {
         Write-Host "Phase 2: Finding test functions that use the resource..." -ForegroundColor Yellow
     }
 
@@ -666,7 +739,7 @@ function Invoke-AllTestFiles {
         if ($result) {
             $results += $result
 
-            if ($ShowProgress) {
+            if ($ShowVerbose) {
                 $usageType = if ($result.DirectMatches -gt 0 -and $result.TemplateReferenceMatches -gt 0) { "Direct + Template Reference" }
                              elseif ($result.DirectMatches -gt 0) { "Direct" }
                              else { "Template Reference" }
@@ -678,7 +751,7 @@ function Invoke-AllTestFiles {
         }
     }
 
-    if ($ShowProgress) {
+    if ($ShowVerbose) {
         Write-Host ""
     }
 
@@ -991,23 +1064,28 @@ function Main {
         }
 
         Set-AdequateConsoleWidth -MinimumWidth 50
-        $rootDir = Initialize-Environment -ScriptRoot $PSScriptRoot
+        $rootDir = Initialize-Environment -ScriptRoot $PSScriptRoot -RepositoryPath $RepositoryPath
 
         Write-Host ""
-        # Display initial message
-        if ($Summary) {
-            Write-Host "Scanning for all test files using resource: '$ResourceName'..." -ForegroundColor Green
-        } else {
-            Write-Host "Searching for tests using resource: '$ResourceName'..." -ForegroundColor Green
+        # Display initial message (suppress for TestNamesOnly)
+        if (-not $TestNamesOnly) {
+            if ($Summary) {
+                Write-Host "Scanning for all test files using resource: '$ResourceName'..." -ForegroundColor Green
+            } else {
+                Write-Host "Searching for tests using resource: '$ResourceName'..." -ForegroundColor Green
+            }
+
+            Write-Host ""
         }
-
-        Write-Host ""
 
         $patterns = Get-SearchPatterns -ResourceName $ResourceName
         $testFiles = Get-TestFiles -RootDir $rootDir -TestFile $TestFile
 
-        $allTemplateFunctionsWithResource = Find-AllTemplateFunctionsWithResource -TestFiles $testFiles -Patterns $patterns -RootDir $rootDir -ShowProgress (-not $Summary)
-        $results = Invoke-AllTestFiles -TestFiles $testFiles -Patterns $patterns -AllTemplateFunctionsWithResource $allTemplateFunctionsWithResource -ResourceName $ResourceName -RootDir $rootDir -ShowProgress (-not $Summary)
+        # Suppress progress output for TestNamesOnly or Summary modes
+        $showProgress = (-not $Summary)
+        $showVerbose = (-not $Summary) -and (-not $TestNamesOnly)
+        $allTemplateFunctionsWithResource = Find-AllTemplateFunctionsWithResource -TestFiles $testFiles -Patterns $patterns -RootDir $rootDir -ShowProgress $showProgress -ShowVerbose $showVerbose
+        $results = Invoke-AllTestFiles -TestFiles $testFiles -Patterns $patterns -AllTemplateFunctionsWithResource $allTemplateFunctionsWithResource -ResourceName $ResourceName -RootDir $rootDir -ShowProgress $showProgress -ShowVerbose $showVerbose
 
         switch ($true) {
             $TestNamesOnly {

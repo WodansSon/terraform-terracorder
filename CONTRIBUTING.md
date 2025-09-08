@@ -1,16 +1,16 @@
-# Contributing to TerraCorder 🤝
+# Contributing to TerraCorder
 
 Thank you for your interest in contributing to TerraCorder! This document provides guidelines and information for contributors.
 
-## 🎯 Ways to Contribute
+## Ways to Contribute
 
-- **🐛 Bug Reports**: Help us identify and fix issues
-- **💡 Feature Requests**: Suggest new functionality
-- **📝 Documentation**: Improve guides, examples, and code comments
-- **🔧 Code Contributions**: Submit bug fixes and enhancements
-- **🧪 Testing**: Help test new features and edge cases
+- **Bug Reports**: Help us identify and fix issues
+- **Feature Requests**: Suggest new functionality
+- **Documentation**: Improve guides, examples, and code comments
+- **Code Contributions**: Submit bug fixes and enhancements
+- **Testing**: Help test new features and edge cases
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - PowerShell 5.1+ or PowerShell Core 7.x
@@ -30,7 +30,7 @@ git checkout -b feature/your-feature-name
 # Test your changes (see Testing section below)
 ```
 
-## 🧪 Testing Your Changes
+## Testing Your Changes
 
 ### Basic Testing
 ```powershell
@@ -61,7 +61,7 @@ Invoke-ScriptAnalyzer -Path "./scripts/terracorder.ps1"
 3. **Console Width**: Test with `-TestConsoleWidth` values: 40, 80, 120, 200
 4. **Cross-Platform**: Test on Windows, Linux, and macOS if possible
 
-## 📝 Code Style Guidelines
+## Code Style Guidelines
 
 ### PowerShell Best Practices
 - Use **approved verbs** for function names (Get-, Set-, New-, etc.)
@@ -98,7 +98,7 @@ try {
 - Comment complex logic and algorithms
 - Update parameter descriptions
 
-## 🔄 Submission Process
+## Submission Process
 
 ### 1. Prepare Your Changes
 ```powershell
@@ -157,7 +157,7 @@ Brief description of what this PR does.
 If applicable, add screenshots or example output.
 ```
 
-## 🐛 Reporting Issues
+## Reporting Issues
 
 ### Bug Reports
 Please include:
@@ -175,7 +175,7 @@ Please include:
 - **Alternatives**: Other ways to achieve the same goal
 - **Examples**: Sample usage or output
 
-## 🏷️ Issue Labels
+## Issue Labels
 
 - `bug`: Something isn't working correctly
 - `enhancement`: New feature or improvement
@@ -187,20 +187,20 @@ Please include:
 - `platform/linux`: Linux-specific issues
 - `platform/macos`: macOS-specific issues
 
-## 🎉 Recognition
+## Recognition
 
 Contributors are recognized in several ways:
 - Listed in GitHub contributors
 - Mentioned in release notes for significant contributions
 - Featured in the README acknowledgments
 
-## 📞 Getting Help
+## Getting Help
 
 - **Discussions**: [GitHub Discussions](https://github.com/WodansSon/terraform-terracorder/discussions)
 - **Issues**: [GitHub Issues](https://github.com/WodansSon/terraform-terracorder/issues)
 - **Documentation**: [Wiki](https://github.com/WodansSon/terraform-terracorder/wiki)
 
-## 📋 Development Roadmap
+## Development Roadmap
 
 Current focus areas:
 - **Multi-provider support** (AWS, GCP providers)
@@ -208,7 +208,7 @@ Current focus areas:
 - **GitHub Actions integration** templates
 - **Visual dependency graphs**
 
-## 🙏 Thank You
+## Thank You
 
 Every contribution, no matter how small, makes TerraCorder better for the entire Terraform community. We appreciate your time and effort!
 

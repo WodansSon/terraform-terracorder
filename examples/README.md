@@ -2,46 +2,66 @@
 
 This directory contains practical examples of how to use TerraCorder in various scenarios.
 
-## 🎯 Common Use Cases
+## Common Use Cases
 
 ### 1. Basic Resource Scanning
 
 ```powershell
-# Find all tests that use azurerm_subnet
-.\terracorder.ps1 -ResourceName "azurerm_subnet"
+# Find all tests that use azurerm_subnet (with explicit repository path)
+.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm"
 
 # Get a clean summary view
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -Summary
+.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -Summary
 
 # Show detailed output with line numbers
+.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -ShowDetails
+
+# Auto-detect repository path when running from within the provider repo
+cd C:\path\to\terraform-provider-azurerm
 .\terracorder.ps1 -ResourceName "azurerm_subnet" -ShowDetails
 ```
 
 ### 2. CI/CD Pipeline Integration
 
 ```powershell
-# Get test names for automated test runs
-$testNames = .\terracorder.ps1 -ResourceName "azurerm_virtual_network" -TestNamesOnly
+# Get clean test names for automated test runs (no progress bars in output)
+$repoPath = "C:\path\to\terraform-provider-azurerm"
+$testNames = .\terracorder.ps1 -ResourceName "azurerm_virtual_network" -RepositoryPath $repoPath -TestNamesOnly
+
+# Example: Run each test individually
 foreach ($test in $testNames) {
-    Write-Host "Would run: go test -run $test"
+    Write-Host "Running: go test -run ^$test`$ -timeout 30m ./internal/services/..." -ForegroundColor Green
+    # go test -run "^$test$" -timeout 30m ./internal/services/...
 }
 
+# Example: GitHub Actions integration
+Write-Host "GitHub Actions matrix strategy:"
+$testNames | ForEach-Object { "        - test-name: `"$_`"" }
+
 # Get test prefixes for batch execution
-$prefixes = .\terracorder.ps1 -ResourceName "azurerm_subnet" -TestPrefixes
+$prefixes = .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath $repoPath -TestPrefixes
 foreach ($prefix in $prefixes) {
-    Write-Host "Would run: go test -run $prefix"
+    Write-Host "Batch run: go test -run $prefix -timeout 60m ./internal/services/..." -ForegroundColor Cyan
 }
 ```
 
 ### 3. JSON Output for Automation
 
 ```powershell
-# Generate JSON report for further processing
-$jsonOutput = .\terracorder.ps1 -ResourceName "azurerm_storage_account" -OutputFormat json | ConvertFrom-Json
+# Generate comprehensive JSON report for further processing
+$repoPath = "C:\path\to\terraform-provider-azurerm"
+$jsonOutput = .\terracorder.ps1 -ResourceName "azurerm_storage_account" -RepositoryPath $repoPath -OutputFormat json | ConvertFrom-Json
 
-Write-Host "Found $($jsonOutput.scan_summary.tests_found) tests in $($jsonOutput.scan_summary.files_scanned) files"
+# Display summary statistics
+Write-Host "=== Analysis Results ===" -ForegroundColor Yellow
+Write-Host "Repository: $($jsonOutput.repository_path)" -ForegroundColor Gray
+Write-Host "Resource: $($jsonOutput.resource_name)" -ForegroundColor Cyan
+Write-Host "Files with matches: $($jsonOutput.summary.files_with_matches)" -ForegroundColor Green
+Write-Host "Total test functions: $($jsonOutput.summary.total_test_functions)" -ForegroundColor Green
+Write-Host "Services affected: $($jsonOutput.summary.services_affected)" -ForegroundColor Magenta
 
-# Process each result
+# Process each result file
+Write-Host "`n=== Top 5 Files by Test Count ===" -ForegroundColor Yellow
 foreach ($result in $jsonOutput.results) {
     Write-Host "$($result.file): $($result.test_function) (line $($result.line_number))"
 }
@@ -51,12 +71,13 @@ foreach ($result in $jsonOutput.results) {
 
 ```powershell
 # Analyze multiple related resources
+$repoPath = "C:\terraform-provider-azurerm"
 $resources = @("azurerm_subnet", "azurerm_virtual_network", "azurerm_network_security_group")
 $allTests = @()
 
 foreach ($resource in $resources) {
     Write-Host "Analyzing $resource..." -ForegroundColor Yellow
-    $tests = .\terracorder.ps1 -ResourceName $resource -TestNamesOnly
+    $tests = .\terracorder.ps1 -ResourceName $resource -RepositoryPath $repoPath -TestNamesOnly
     $allTests += $tests
 }
 
@@ -71,15 +92,16 @@ $uniqueTests | ForEach-Object { Write-Host "  $_" }
 ```powershell
 # Generate comprehensive impact report
 function New-ImpactReport {
-    param([string]$ResourceName)
+    param(
+        [string]$ResourceName,
+        [string]$RepositoryPath = "C:\terraform-provider-azurerm"
+    )
 
     $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
     $reportPath = "impact-report-$ResourceName-$timestamp.html"
 
     # Get data
-    $jsonData = .\terracorder.ps1 -ResourceName $ResourceName -OutputFormat json | ConvertFrom-Json
-
-    # Generate HTML report
+    $jsonData = .\terracorder.ps1 -ResourceName $ResourceName -RepositoryPath $RepositoryPath -OutputFormat json | ConvertFrom-Json    # Generate HTML report
     $html = @"
 <!DOCTYPE html>
 <html>
@@ -95,12 +117,12 @@ function New-ImpactReport {
 </head>
 <body>
     <div class="header">
-        <h1>🔍 Impact Analysis: $ResourceName</h1>
+        <h1>Impact Analysis: $ResourceName</h1>
         <p>Generated on: $(Get-Date)</p>
     </div>
 
     <div class="summary">
-        <h2>📊 Summary</h2>
+        <h2>Summary</h2>
         <ul>
             <li><strong>Files Scanned:</strong> $($jsonData.scan_summary.files_scanned)</li>
             <li><strong>Tests Found:</strong> $($jsonData.scan_summary.tests_found)</li>
@@ -109,11 +131,11 @@ function New-ImpactReport {
     </div>
 
     <div class="test-list">
-        <h2>🧪 Affected Tests</h2>
+        <h2>Affected Tests</h2>
 "@
 
     foreach ($result in $jsonData.results) {
-        $html += "<div class='test-item'><strong>$($result.test_function)</strong><br/>📁 $($result.file)<br/>📍 Line $($result.line_number) ($($result.match_type))</div>`n"
+        $html += "<div class='test-item'><strong>$($result.test_function)</strong><br/>File: $($result.file)<br/>Line: $($result.line_number) ($($result.match_type))</div>`n"
     }
 
     $html += @"
@@ -133,7 +155,7 @@ function New-ImpactReport {
 New-ImpactReport -ResourceName "azurerm_subnet"
 ```
 
-## 🔧 Advanced Scenarios
+## Advanced Scenarios
 
 ### Cross-Platform Usage
 
@@ -171,14 +193,14 @@ foreach ($file in $changedFiles) {
 
         $tests = .\terracorder.ps1 -ResourceName $resourceName -TestNamesOnly
         if ($tests.Count -gt 0) {
-            Write-Host "⚠️  The following tests should be run:" -ForegroundColor Red
+            Write-Host "WARNING: The following tests should be run:" -ForegroundColor Red
             $tests | ForEach-Object { Write-Host "  go test -run $_" }
         }
     }
 }
 ```
 
-## 📊 Output Format Examples
+## Output Format Examples
 
 ### List Format (Default)
 ```
@@ -219,7 +241,7 @@ internal/services/network/subnet_test.go,TestAccSubnet_basic,15,direct
 internal/services/network/subnet_test.go,TestAccSubnet_disappears,45,direct
 ```
 
-## 🎭 Mock Testing Environment
+## Mock Testing Environment
 
 For testing TerraCorder itself:
 
@@ -234,7 +256,7 @@ For testing TerraCorder itself:
 .\terracorder.ps1 -ResourceName "nonexistent_resource" -Summary
 ```
 
-## 📝 Tips and Best Practices
+## Tips and Best Practices
 
 1. **Use Summary Mode**: For quick overviews, always use `-Summary`
 2. **JSON for Automation**: Use `-OutputFormat json` for scripted processing
@@ -243,7 +265,7 @@ For testing TerraCorder itself:
 5. **Regular Scanning**: Run periodically to understand test dependencies
 6. **Documentation**: Save reports for team sharing and documentation
 
-## 🔗 Integration Examples
+## Integration Examples
 
 ### With GitHub Actions
 ```yaml

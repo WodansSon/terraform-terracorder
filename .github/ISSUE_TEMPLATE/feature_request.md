@@ -7,11 +7,11 @@ assignees: ''
 
 ---
 
-## 💡 Feature Description
+## Feature Description
 
 A clear and concise description of the feature you'd like to see added to TerraCorder.
 
-## 🎯 Problem/Use Case
+## Problem/Use Case
 
 Is your feature request related to a problem? Please describe the use case or problem you're trying to solve.
 
@@ -19,11 +19,11 @@ Is your feature request related to a problem? Please describe the use case or pr
 
 Describe the solution you'd like to see implemented.
 
-## 🔄 Alternative Solutions
+## Alternative Solutions
 
 Describe any alternative solutions or features you've considered.
 
-## 📋 Example Usage
+## Example Usage
 
 Show how you envision using this feature:
 
@@ -32,7 +32,7 @@ Show how you envision using this feature:
 .\terracorder.ps1 -NewFeature -ExampleParameter "value"
 ```
 
-## 📊 Expected Output
+## Expected Output
 
 If applicable, show what kind of output or behavior you expect:
 
@@ -40,14 +40,14 @@ If applicable, show what kind of output or behavior you expect:
 Expected output format or behavior description
 ```
 
-## 🏗️ Implementation Ideas
+## Implementation Ideas
 
 If you have ideas about how this could be implemented, share them here:
 - Technical approach
 - PowerShell functions that might be needed
 - Integration points with existing functionality
 
-## 🎛️ Configuration Options
+## Configuration Options
 
 What configuration options or parameters should be available?
 
@@ -55,13 +55,13 @@ What configuration options or parameters should be available?
 |-----------|------|-------------|---------|
 | `-NewOption` | String | Description of option | `"example"` |
 
-## 🔗 Related Issues
+## Related Issues
 
 Link to any related issues or discussions:
 - Fixes #123
 - Related to #456
 
-## 📈 Priority
+## Priority
 
 How important is this feature to you?
 - [ ] Nice to have
@@ -69,7 +69,7 @@ How important is this feature to you?
 - [ ] Important for my workflow
 - [ ] Critical/blocking
 
-## 🌍 Impact
+## Impact
 
 Who would benefit from this feature?
 - [ ] Individual developers
@@ -78,6 +78,6 @@ Who would benefit from this feature?
 - [ ] Enterprise usage
 - [ ] Open source projects
 
-## 📝 Additional Context
+## Additional Context
 
 Add any other context, mockups, or examples about the feature request here.

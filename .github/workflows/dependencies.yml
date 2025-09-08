@@ -36,12 +36,12 @@ jobs:
                 $installed = Get-Module -Name $module -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
 
                 if ($installed -and ($installed.Version -lt $latest.Version)) {
-                    Write-Host "📦 $module can be updated: $($installed.Version) → $($latest.Version)"
+                    Write-Host "$module can be updated: $($installed.Version) → $($latest.Version)"
                 } else {
-                    Write-Host "✅ $module is up to date"
+                    Write-Host "$module is up to date"
                 }
             } catch {
-                Write-Host "⚠️  Could not check $module"
+                Write-Host "Could not check $module"
             }
         }
 
@@ -67,7 +67,7 @@ jobs:
         if ($requiredModules.Count -gt 0) {
             Write-Host "Required modules found: $($requiredModules -join ', ')"
         } else {
-            Write-Host "✅ No external module dependencies detected"
+            Write-Host "No external module dependencies detected"
         }
 
     - name: Create Update Report
@@ -82,7 +82,7 @@ jobs:
 
         $report | ConvertTo-Json | Out-File -FilePath "dependency-report.json"
 
-        Write-Host "📊 Dependency check completed"
+        Write-Host "Dependency check completed"
 
     - name: Upload Dependency Report
       uses: actions/upload-artifact@v3

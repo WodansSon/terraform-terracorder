@@ -61,7 +61,7 @@ jobs:
           exit 1
         }
 
-        Write-Host "✅ PowerShell syntax validation passed"
+        Write-Host "PowerShell syntax validation passed"
 
     - name: Run PSScriptAnalyzer
       shell: pwsh
@@ -81,12 +81,12 @@ jobs:
           # Fail on errors, warn on warnings
           $errors = $results | Where-Object { $_.Severity -eq 'Error' }
           if ($errors.Count -gt 0) {
-            Write-Error "❌ PSScriptAnalyzer found $($errors.Count) error(s)"
+            Write-Error "PSScriptAnalyzer found $($errors.Count) error(s)"
             exit 1
           }
         }
 
-        Write-Host "✅ PSScriptAnalyzer validation passed"
+        Write-Host "PSScriptAnalyzer validation passed"
 
     - name: Test Script Execution
       shell: pwsh
@@ -96,11 +96,11 @@ jobs:
         # Test help parameter
         $helpOutput = & "./scripts/terracorder.ps1" -? 2>&1
         if ($LASTEXITCODE -ne 0) {
-          Write-Error "❌ Help parameter test failed"
+          Write-Error "Help parameter test failed"
           exit 1
         }
 
-        Write-Host "✅ Script execution tests passed"
+        Write-Host "Script execution tests passed"
 
     - name: Create Test Results
       if: always()
@@ -173,7 +173,7 @@ jobs:
       id: release_notes
       run: |
         cat > release_notes.md << 'EOF'
-        ## 🚀 TerraCorder v${{ steps.version.outputs.version }}
+        ## TerraCorder v${{ steps.version.outputs.version }}
 
         ### What's New
         - Enhanced Terraform test dependency scanning
@@ -187,9 +187,9 @@ jobs:
         ```
 
         ### Platform Support
-        - ✅ Windows (PowerShell 5.1+)
-        - ✅ Linux (PowerShell Core 7.x)
-        - ✅ macOS (PowerShell Core 7.x)
+        - Windows (PowerShell 5.1+)
+        - Linux (PowerShell Core 7.x)
+        - macOS (PowerShell Core 7.x)
 
         ### Usage
         ```powershell
