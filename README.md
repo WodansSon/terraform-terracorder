@@ -203,27 +203,32 @@ TestAccNetworkSecurityGroup_withSubnet
 ### JSON Format (`-OutputFormat json`)
 ```json
 {
-  "resource_name": "azurerm_subnet",
-  "repository_path": "C:\\terraform-provider-azurerm",
-  "scan_timestamp": "2024-03-15T10:30:00Z",
-  "summary": {
-    "files_with_matches": 247,
-    "total_direct_matches": 2558,
-    "total_template_matches": 3159,
-    "total_test_functions": 1457,
-    "unique_test_prefixes": 199,
-    "services_affected": 62
-  },
-  "results": [
+  "ResourceName": "azurerm_subnet",
+  "TotalMatches": 5721,
+  "TotalFiles": 247,
+  "Files": [
     {
-      "file": "internal/services/network/subnet_resource_test.go",
-      "relative_path": "./internal/services/network/subnet_resource_test.go",
-      "direct_matches": 45,
-      "template_matches": 12,
-      "test_functions": ["TestAccSubnet_basic", "TestAccSubnet_complete"],
-      "template_functions": ["basic", "complete", "requiresImport"]
+      "File": "internal/services/network/subnet_resource_test.go",
+      "RelativePath": "./internal/services/network/subnet_resource_test.go",
+      "DirectMatches": 45,
+      "TemplateMatches": 12,
+      "TestFunctions": ["TestAccSubnet_basic", "TestAccSubnet_complete"],
+      "TemplateFunctions": ["basic", "complete", "requiresImport"]
+    },
+    {
+      "File": "internal/services/network/virtual_network_resource_test.go",
+      "RelativePath": "./internal/services/network/virtual_network_resource_test.go",
+      "DirectMatches": 8,
+      "TemplateMatches": 3,
+      "TestFunctions": ["TestAccVirtualNetwork_withSubnet"],
+      "TemplateFunctions": ["withSubnet"]
     }
-  ]
+  ],
+  "TemplateFunctionsWithResource": {
+    "basic": ["internal/services/network/subnet_resource_test.go"],
+    "complete": ["internal/services/network/subnet_resource_test.go"],
+    "withSubnet": ["internal/services/network/virtual_network_resource_test.go"]
+  }
 }
 ```
 
