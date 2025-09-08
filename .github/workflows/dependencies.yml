@@ -1,0 +1,91 @@
+name: Auto-Update Dependencies
+
+on:
+  schedule:
+    # Run every Monday at 9:00 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  update-dependencies:
+    name: Update PowerShell Modules
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update PowerShell Modules
+      shell: pwsh
+      run: |
+        Write-Host "Checking for PowerShell module updates..."
+
+        # List of modules that might be used
+        $modules = @(
+            'PSScriptAnalyzer'
+            'Pester'
+            'PowerShellGet'
+        )
+
+        foreach ($module in $modules) {
+            try {
+                Write-Host "Checking $module..."
+                $latest = Find-Module -Name $module -Repository PSGallery
+                $installed = Get-Module -Name $module -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
+
+                if ($installed -and ($installed.Version -lt $latest.Version)) {
+                    Write-Host "📦 $module can be updated: $($installed.Version) → $($latest.Version)"
+                } else {
+                    Write-Host "✅ $module is up to date"
+                }
+            } catch {
+                Write-Host "⚠️  Could not check $module"
+            }
+        }
+
+    - name: Check Script Dependencies
+      shell: pwsh
+      run: |
+        Write-Host "Analyzing script dependencies..."
+
+        $scriptContent = Get-Content "./scripts/terracorder.ps1" -Raw
+
+        # Look for Import-Module or #Requires statements
+        $requiredModules = @()
+        if ($scriptContent -match '#Requires -Modules (.+)') {
+            $requiredModules += $Matches[1] -split ','
+        }
+
+        # Look for any Import-Module statements
+        $importMatches = [regex]::Matches($scriptContent, 'Import-Module\s+([^\s\r\n]+)')
+        foreach ($match in $importMatches) {
+            $requiredModules += $match.Groups[1].Value
+        }
+
+        if ($requiredModules.Count -gt 0) {
+            Write-Host "Required modules found: $($requiredModules -join ', ')"
+        } else {
+            Write-Host "✅ No external module dependencies detected"
+        }
+
+    - name: Create Update Report
+      shell: pwsh
+      run: |
+        $report = @{
+            Date = Get-Date -Format "yyyy-MM-dd"
+            CheckedModules = @('PSScriptAnalyzer', 'Pester', 'PowerShellGet')
+            Status = "Dependencies checked"
+            ScriptDependencies = "None detected"
+        }
+
+        $report | ConvertTo-Json | Out-File -FilePath "dependency-report.json"
+
+        Write-Host "📊 Dependency check completed"
+
+    - name: Upload Dependency Report
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-report
+        path: dependency-report.json

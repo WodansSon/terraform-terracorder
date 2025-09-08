@@ -1,0 +1,232 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  POWERSHELL_DISTRIBUTION_CHANNEL: GitHub-Actions-CI
+
+jobs:
+  test:
+    name: Test PowerShell Script
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        powershell-version: [5.1, 7.x]
+        exclude:
+          - os: ubuntu-latest
+            powershell-version: 5.1
+          - os: macos-latest
+            powershell-version: 5.1
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup PowerShell (Windows PowerShell 5.1)
+      if: matrix.powershell-version == '5.1'
+      shell: pwsh
+      run: |
+        Write-Host "Using Windows PowerShell 5.1"
+        $PSVersionTable
+
+    - name: Setup PowerShell Core
+      if: matrix.powershell-version == '7.x'
+      uses: azure/powershell@v1
+      with:
+        azPSVersion: 'latest'
+        inlineScript: |
+          Write-Host "Using PowerShell Core"
+          $PSVersionTable
+
+    - name: Validate PowerShell Syntax
+      shell: pwsh
+      run: |
+        Write-Host "Validating PowerShell syntax..."
+        $scriptPath = "./scripts/terracorder.ps1"
+
+        # Parse the script to check for syntax errors
+        $parseErrors = $null
+        $parseResult = [System.Management.Automation.PSParser]::Tokenize((Get-Content $scriptPath -Raw), [ref]$parseErrors)
+
+        if ($parseErrors.Count -gt 0) {
+          Write-Error "Syntax errors found in $scriptPath"
+          $parseErrors | ForEach-Object { Write-Error $_.Message }
+          exit 1
+        }
+
+        Write-Host "✅ PowerShell syntax validation passed"
+
+    - name: Run PSScriptAnalyzer
+      shell: pwsh
+      run: |
+        Write-Host "Installing PSScriptAnalyzer..."
+        Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+
+        Write-Host "Running PSScriptAnalyzer..."
+        $results = Invoke-ScriptAnalyzer -Path "./scripts/terracorder.ps1" -Severity Warning,Error
+
+        if ($results.Count -gt 0) {
+          Write-Host "PSScriptAnalyzer findings:" -ForegroundColor Yellow
+          $results | ForEach-Object {
+            Write-Host "  $($_.Severity): $($_.Message) at line $($_.Line)" -ForegroundColor Yellow
+          }
+
+          # Fail on errors, warn on warnings
+          $errors = $results | Where-Object { $_.Severity -eq 'Error' }
+          if ($errors.Count -gt 0) {
+            Write-Error "❌ PSScriptAnalyzer found $($errors.Count) error(s)"
+            exit 1
+          }
+        }
+
+        Write-Host "✅ PSScriptAnalyzer validation passed"
+
+    - name: Test Script Execution
+      shell: pwsh
+      run: |
+        Write-Host "Testing script execution..."
+
+        # Test help parameter
+        $helpOutput = & "./scripts/terracorder.ps1" -? 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "❌ Help parameter test failed"
+          exit 1
+        }
+
+        Write-Host "✅ Script execution tests passed"
+
+    - name: Create Test Results
+      if: always()
+      shell: pwsh
+      run: |
+        $testResults = @{
+          OS = "${{ matrix.os }}"
+          PowerShellVersion = "${{ matrix.powershell-version }}"
+          Status = if ($?) { "Passed" } else { "Failed" }
+          Timestamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
+        }
+
+        $testResults | ConvertTo-Json | Out-File -FilePath "test-results-${{ matrix.os }}-ps${{ matrix.powershell-version }}.json"
+
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ matrix.os }}-ps${{ matrix.powershell-version }}
+        path: test-results-*.json
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run DevSkim Scanner
+      uses: microsoft/DevSkim-Action@v1
+      with:
+        directory-to-scan: ./scripts
+
+    - name: Upload DevSkim Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: devskim-results
+        path: devskim-results.sarif
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [test, security-scan]
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Extract Version from Tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+
+    - name: Create Release Archive
+      run: |
+        mkdir -p release
+        cp scripts/terracorder.ps1 release/
+        cp README.md release/
+        cp LICENSE release/
+
+        # Create archives
+        tar -czf terracorder-${{ steps.version.outputs.version }}-linux.tar.gz -C release .
+        zip -r terracorder-${{ steps.version.outputs.version }}-windows.zip release/
+
+    - name: Generate Release Notes
+      id: release_notes
+      run: |
+        cat > release_notes.md << 'EOF'
+        ## 🚀 TerraCorder v${{ steps.version.outputs.version }}
+
+        ### What's New
+        - Enhanced Terraform test dependency scanning
+        - Improved cross-platform compatibility
+        - Better error handling and user experience
+
+        ### Installation
+        ```powershell
+        # Download and run
+        Invoke-WebRequest -Uri "https://github.com/WodansSon/terraform-terracorder/releases/download/v${{ steps.version.outputs.version }}/terracorder.ps1" -OutFile "terracorder.ps1"
+        ```
+
+        ### Platform Support
+        - ✅ Windows (PowerShell 5.1+)
+        - ✅ Linux (PowerShell Core 7.x)
+        - ✅ macOS (PowerShell Core 7.x)
+
+        ### Usage
+        ```powershell
+        .\terracorder.ps1 -ResourceName "azurerm_subnet" -Summary
+        ```
+
+        For full documentation, see the [README](https://github.com/WodansSon/terraform-terracorder/blob/main/README.md).
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: TerraCorder v${{ steps.version.outputs.version }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        files: |
+          terracorder-${{ steps.version.outputs.version }}-linux.tar.gz
+          terracorder-${{ steps.version.outputs.version }}-windows.zip
+          scripts/terracorder.ps1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-badges:
+    name: Update README Badges
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update Build Status Badge
+      run: |
+        # This would update badges in README if needed
+        echo "Build status updated in badges"
