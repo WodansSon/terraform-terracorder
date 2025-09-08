@@ -237,13 +237,35 @@ TestAccNetworkSecurityGroup_withSubnet
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `-ResourceName` | **Required**. Azure resource to search for | `"azurerm_subnet"` |
-| `-RepositoryPath` | **Optional**. Path to terraform-provider-azurerm repository root. Auto-detected if not specified. | `"C:\terraform-provider-azurerm"` |
+| `-RepositoryPath` | **Required**. Path to terraform-provider-azurerm repository root. | `"C:\terraform-provider-azurerm"` |
 | `-ShowDetails` | Include line numbers and context in output | Switch parameter |
 | `-OutputFormat` | Output format: `list` (default), `json`, `csv` | `"json"` |
 | `-TestFile` | Analyze specific file only (relative to repository root) | `"internal/services/network/subnet_test.go"` |
 | `-TestNamesOnly` | **CI/CD Mode**. Output only clean test function names (one per line) | Switch parameter |
 | `-TestPrefixes` | Output unique test prefixes for batch execution | Switch parameter |
-| `-Summary` | Concise summary format with totals and statistics | Switch parameter |
+| `-Summary` | **Recommended for development**. Concise summary format with totals and statistics - most useful during resource development | Switch parameter |
+
+## Troubleshooting
+
+### Repository Path Issues
+
+If TerraCorder cannot find your terraform-provider-azurerm repository, you'll see a clear error message with solutions:
+
+```
+Error: Unable to find the terraform-provider-azurerm repository root directory.
+
+  Please specify the repository path using the -RepositoryPath parameter:
+    .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm"
+
+  Or run this script from within the terraform-provider-azurerm directory structure:
+    cd C:\path\to\terraform-provider-azurerm
+    C:\path\to\terracorder.ps1 -ResourceName "azurerm_subnet"
+```
+
+**Solutions:**
+1. **Specify the full path** to your terraform-provider-azurerm repository using `-RepositoryPath`
+2. **Run from within the repository** - TerraCorder will auto-detect the repository root
+3. **Verify the path exists** and contains the expected `internal/services` directory structure
 
 ## Requirements
 

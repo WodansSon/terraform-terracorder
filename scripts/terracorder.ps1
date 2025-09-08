@@ -195,15 +195,15 @@ function Initialize-Environment {
 
         if (-not $rootDir) {
             $errorMessage = @"
-Could not find terraform-provider-azurerm repository root directory.
+Unable to find the terraform-provider-azurerm repository root directory.
 
 Please specify the repository path using the -RepositoryPath parameter:
     .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm"
 
-Or run this script from within the terraform-provider-azurerm directory structure.
-
-Searched in:
-"@ + ($searchPaths | ForEach-Object { "`n  - $_" })
+Or run this script from within the terraform-provider-azurerm directory structure:
+    cd C:\path\to\terraform-provider-azurerm
+    C:\path\to\terracorder.ps1 -ResourceName "azurerm_subnet"
+"@
 
             throw $errorMessage
         }
@@ -1108,9 +1108,24 @@ function Main {
         }
     }
     catch {
-        Write-Host "Error Occurred: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "Line Number   : $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
-        Write-Host "Exception Type: $($_.Exception.GetType().Name)" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Error: " -ForegroundColor Red -NoNewline
+
+        # Check if this is the repository path error for better formatting
+        if ($_.Exception.Message -like "*Unable to find the terraform-provider-azurerm repository root directory*") {
+            Write-Host "Unable to find the terraform-provider-azurerm repository root directory." -ForegroundColor Red
+            Write-Host ""
+            Write-Host "  Please specify the repository path using the -RepositoryPath parameter:" -ForegroundColor Cyan
+            Write-Host "    .\terracorder.ps1 -ResourceName `"azurerm_subnet`" -RepositoryPath `"C:\path\to\terraform-provider-azurerm`"" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "  Or run this script from within the terraform-provider-azurerm directory structure:" -ForegroundColor Cyan
+            Write-Host "    cd C:\path\to\terraform-provider-azurerm" -ForegroundColor Gray
+            Write-Host "    C:\path\to\terracorder.ps1 -ResourceName `"azurerm_subnet`"" -ForegroundColor Gray
+        } else {
+            Write-Host "$($_.Exception.Message)" -ForegroundColor Red
+        }
+
+        Write-Host ""
         exit 1
     }
 }
