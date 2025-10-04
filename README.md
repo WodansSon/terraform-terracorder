@@ -1,10 +1,10 @@
 # TerraCorder
 
-*"Scanning Terraform test matrix... Dependencies detected, Captain!"*
+*"Analyzing Terraform test matrix... Building comprehensive dependency database!"*
 
-A powerful **standalone** Terraform test dependency scanner that helps identify all tests that need to be run when modifying Azure resources in the Terraform AzureRM provider. TerraCorder intelligently discovers test dependencies through both direct resource usage and template references, ensuring comprehensive test coverage analysis.
+A high-performance **database-driven** Terraform test analysis tool that identifies all tests needed when modifying Azure resources in the Terraform AzureRM provider. TerraCorder builds a complete relational database of test dependencies, tracking direct resource usage, template references, and sequential test patterns with full foreign key relationships.
 
-Works from anywhere - just point it to your terraform-provider-azurerm repository!
+**Two powerful modes:** Discovery Mode for initial analysis with multi-threaded processing, and Database Mode for fast querying of previously analyzed data!
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?style=flat&logo=powershell&logoColor=white)](https://github.com/PowerShell/PowerShell)
 [![Terraform](https://img.shields.io/badge/Terraform-623CE4?style=flat&logo=terraform&logoColor=white)](https://www.terraform.io/)
@@ -14,312 +14,438 @@ Works from anywhere - just point it to your terraform-provider-azurerm repositor
 
 ## Features
 
-- **Comprehensive Dependency Detection**: Finds tests using resources directly or via template references
-- **Standalone Tool**: Works from anywhere - just specify the repository path or run from within the repo
-- **Repository Auto-Detection**: Intelligently finds terraform-provider-azurerm repositories
-- **Clean CI/CD Output**: `-TestNamesOnly` mode produces pipeline-ready test function names
-- **Multiple Output Formats**: List, JSON, CSV, and summary formats
-- **Smart Template Analysis**: Analyzes template functions to discover indirect dependencies
-- **Progress Visualization**: Beautiful progress bars with file-by-file scanning feedback
-- **Flexible Filtering**: Focus on specific files, test names, or test prefixes
-- **Cross-Platform**: Works on Windows, Linux, and macOS with PowerShell Core
+### Discovery Mode (Initial Analysis)
+- **Relational Database Architecture**: Full normalized database with foreign key relationships tracking all test dependencies
+- **Multi-Threaded Processing**: Parallel file processing with up to 8 threads for maximum performance
+- **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns
+- **Database Export**: Complete CSV exports of all 12 database tables for advanced analysis
+- **Visual Progress Tracking**: Real-time multi-threaded progress with file-by-file scanning feedback
+- **Smart Test Command Generation**: Automatically generates optimized `go test` commands by service
+- **Sequential Test Support**: Detects and tracks `acceptance.RunTestsInSequence` patterns
+- **Template Function Analysis**: Maps complete template dependency chains across files
+
+### Database Mode (Query Existing Data)
+- **Fast Query Operations**: Analyze previously discovered data in seconds, not minutes
+- **No File Scanning**: Load from CSV exports instantly without repository access
+- **Multiple Query Types**: Direct references, indirect references, sequential patterns, cross-file dependencies, or all combined
+- **Data Exploration**: Perfect for analysis, reporting, and understanding test relationships
+- **Cross-Platform**: Works on Windows, Linux, and macOS with PowerShell Core 7.0+
 
 ## Quick Start
 
-### Download and Run
-```powershell
-# Download TerraCorder
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/scripts/terracorder.ps1" -OutFile "terracorder.ps1"
-
-# Find all tests using azurerm_subnet (specify repository path)
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -Summary
-
-# Or let TerraCorder auto-detect the repository if running from within it
-cd C:\path\to\terraform-provider-azurerm
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -Summary
-```
-
-### Clone and Use
+### Clone and Use (Recommended)
+TerraCorder requires the modules directory to function properly. The easiest way to get started is to clone the repository:
 ```powershell
 # Clone the repository
 git clone https://github.com/WodansSon/terraform-terracorder.git
 cd terraform-terracorder
 
-# Run TerraCorder with explicit repository path
-.\scripts\terracorder.ps1 -ResourceName "azurerm_virtual_network" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -ShowDetails
+# Run Discovery Mode (initial analysis)
+.\scripts\terracorder.ps1 -ResourceName "azurerm_virtual_network" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
 
-# Or run from within the terraform provider repository
-cd C:\path\to\terraform-provider-azurerm
-C:\path\to\terraform-terracorder\scripts\terracorder.ps1 -ResourceName "azurerm_virtual_network" -ShowDetails
-```## Usage Examples
+# Run Database Mode (query existing data)
+.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowDirectReferences
 
-### Basic Resource Scanning
+# Specify custom export directory
+.\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm" -ExportDirectory "C:\analysis\output"
+```
+
+### Manual Download
+If you prefer not to clone, you can download the required files manually:
 ```powershell
-# Find all tests that use azurerm_subnet (with explicit repository path)
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm"
+# Create directory structure
+New-Item -Path "terracorder" -ItemType Directory
+New-Item -Path "terracorder\modules" -ItemType Directory
+New-Item -Path "terracorder\scripts" -ItemType Directory
 
-# Get a summary view with just file names and test functions
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -Summary
+# Download main script
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/scripts/terracorder.ps1" -OutFile "terracorder\scripts\terracorder.ps1"
 
-# Show detailed output with line numbers and context
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -ShowDetails
+# Download required modules
+$modules = @(
+    "Database.psm1",
+    "FileDiscovery.psm1",
+    "PatternAnalysis.psm1",
+    "ProcessingCore.psm1",
+    "ReferencesProcessing.psm1",
+    "RelationalQueries.psm1",
+    "SequentialProcessing.psm1",
+    "TemplateProcessing.psm1",
+    "TemplateProcessingStrategies.psm1",
+    "TestFunctionProcessing.psm1",
+    "TestFunctionStepsProcessing.psm1",
+    "UI.psm1"
+)
 
-# Auto-detect repository path (when running from within the provider repo)
-cd C:\path\to\terraform-provider-azurerm
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -Summary
+foreach ($module in $modules) {
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/modules/$module" -OutFile "terracorder\modules\$module"
+}
+
+# Run TerraCorder
+cd terracorder
+.\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+```
+
+## Usage Examples
+
+### Discovery Mode - Initial Resource Analysis
+```powershell
+# Analyze all tests that use azurerm_subnet (creates CSV database)
+.\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+# Use custom export directory for database
+.\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\terraform-provider-azurerm" -ExportDirectory "C:\analysis\subnet"
+```
+
+### Database Mode - Query Existing Data
+```powershell
+# Show direct resource references (fast, no file scanning)
+.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowDirectReferences
+
+# Show indirect/template references
+.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowIndirectReferences
+
+# Show sequential test patterns
+.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowSequentialReferences
+
+# Show cross-file struct dependencies
+.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowCrossFileReferences
+
+# Show all reference types combined
+.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowAllReferences
+
+# Use custom database location
+.\scripts\terracorder.ps1 -DatabaseDirectory "C:\analysis\subnet" -ShowAllReferences
+```
+
+### Database Exports
+```powershell
+# TerraCorder automatically exports 12 CSV tables to the output directory:
+# - Resources.csv                  : Master resource table (Azure resource being analyzed)
+# - Services.csv                   : All Azure services discovered
+# - Files.csv                      : All test files analyzed
+# - Structs.csv                    : All test resource structs found
+# - TestFunctions.csv              : All test functions discovered
+# - TestFunctionSteps.csv          : Individual test steps and configurations
+# - TemplateFunctions.csv          : Template/configuration methods
+# - TemplateReferences.csv         : Template method calls in tests
+# - DirectResourceReferences.csv   : Direct resource usage
+# - IndirectConfigReferences.csv   : Indirect template dependencies
+# - SequentialReferences.csv       : Sequential test relationships
+# - ReferenceTypes.csv             : Reference type lookup table
+
+# Default location: ./output/*.csv
+# Access via: -ExportDirectory parameter
 ```
 
 ### CI/CD Pipeline Integration
 ```powershell
-# Get clean test names for CI/CD systems (no progress bars in output)
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -TestNamesOnly
-
-# Example output (one test name per line):
-# TestAccSubnet_basic
-# TestAccSubnet_complete
-# TestAccVirtualNetwork_withSubnet
-
-# Use in GitHub Actions or Azure DevOps pipelines
-$tests = .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "$env:REPO_PATH" -TestNamesOnly
-foreach ($test in $tests) {
-    go test -run "^$test$" -timeout 30m ./internal/services/...
+# Use the generated go_test_commands.txt for CI/CD
+$testFile = "C:\terracorder\output\go_test_commands.txt"
+Get-Content $testFile | Where-Object { $_ -match "^  go test" } | ForEach-Object {
+    Invoke-Expression $_
 }
+
+# Or parse the CSV exports for custom test execution logic
+$tests = Import-Csv "C:\terracorder\output\TestFunctions.csv"
+$subnetTests = $tests | Where-Object { $_.FunctionName -like "*Subnet*" }
 ```
 
-### Output Formats
-```powershell
-# JSON output for programmatic processing
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -OutputFormat json
+## Real-World Performance
 
-# CSV output for spreadsheet analysis
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -OutputFormat csv
+TerraCorder uses multi-threaded processing for maximum performance:
 
-# Get unique test prefixes for batch execution
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -TestPrefixes
+### Example: `azurerm_resource_group` Analysis
+```
+Phase 1: File Discovery               : 2,695 files found, 1,277 relevant in 4,826 ms
+Phase 2: Multi-Threaded File Reading  : 8 threads, 8,473 functions found in 2,406 ms
+Phase 3: Sequential Pattern Detection : 24 additional patterns in 1,621 ms
+Phase 4: Database Population          : 1,282 files, 8,591 steps in 35,584 ms
+Phase 5: Reference Processing         : 26,771 direct, 12,700 config refs in 8,468 ms
+Phase 6: Sequential References        : 273 sequential links in 60 ms
+Phase 7: Test Command Generation      : 127 services in 533 ms
+Phase 8: Database Export              : 12 tables in 489 ms
+
+Total Execution Time                  : 54.3 seconds
 ```
 
-### Targeted Analysis
-```powershell
-# Test a specific file within the repository
-.\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm" -TestFile "internal/services/network/subnet_test.go"
-
-# Find tests for multiple resources (run separately and combine)
-@("azurerm_subnet", "azurerm_virtual_network") | ForEach-Object {
-    .\terracorder.ps1 -ResourceName $_ -RepositoryPath "C:\path\to\terraform-provider-azurerm" -TestNamesOnly
-} | Sort-Object -Unique
-
-# Real-world example: Find all tests for subnet-related resources
-$subnetResources = @("azurerm_subnet", "azurerm_subnet_nat_gateway_association", "azurerm_subnet_route_table_association")
-$allTests = $subnetResources | ForEach-Object {
-    .\terracorder.ps1 -ResourceName $_ -RepositoryPath "C:\terraform-provider-azurerm" -TestNamesOnly
-} | Sort-Object -Unique
-Write-Host "Found $($allTests.Count) unique tests across all subnet resources"
+### Database Size: `azurerm_kubernetes_cluster`
 ```
-
-## Real-World Results
-
-TerraCorder has been tested against the full terraform-provider-azurerm repository with impressive results:
-
-### Example: `azurerm_subnet` Analysis
-```
-Files With Matches                    : 247 files
-Total Matches Found                   : 5,721 matches
-Total Test Functions                  : 1,457 test functions
-Services Affected                     : 62 Azure services
-Scan Time                            : ~15 seconds
-```
-
-### Example: `azurerm_virtual_network` Analysis
-```
-Template Functions Discovered        : 546 template functions
-Test Functions Found                 : 800+ test functions
-Cross-Service Dependencies           : 45+ services
-Direct vs Template References        : Smart detection of both patterns
+Services Table                        : 5 services
+Files Table                           : 22 files
+Structs Table                         : 16 structs
+TestFunctions Table                   : 322 test functions
+TestFunctionSteps Table               : 502 test steps
+TemplateFunctions Table               : 333 template functions
+TemplateReferences Table              : 501 template calls
+DirectResourceReferences Table        : 910 direct references
+IndirectConfigReferences Table        : 238 indirect references
+SequentialReferences Table            : 0 sequential links
+ReferenceTypes Table                  : 13 reference types
 ```
 
 ## How It Works
 
-TerraCorder uses a two-phase approach to discover test dependencies:
+### Discovery Mode - 8-Phase Database-Driven Analysis
 
-### Phase 1: Direct Resource Detection
-- Scans all `*_test.go` files in the `internal/services/` directory
-- Identifies direct usage of the specified resource (e.g., `azurerm_subnet`)
-- Extracts test function names and file locations
+TerraCorder uses an **8-phase approach** to build the complete test dependency database:
 
-### Phase 2: Template Reference Analysis
-- Discovers template functions that contain the target resource
-- Finds all tests that call these template functions
-- Maps indirect dependencies through template usage
+#### Phase 1: File Discovery and Filtering
+- Discovers all `*_test.go` and `*_resource.go` files in `internal/services/`
+- Filters to files containing the target resource name
+- Uses fast string matching for initial filtering
 
-### Smart Progress Tracking
-- Real-time file scanning progress with visual indicators
-- Automatic console width detection and adjustment
-- Graceful handling of narrow terminal windows
+#### Phase 2: Multi-Threaded File Reading and Categorization
+- Parallel processing with up to 8 threads
+- Reads and categorizes files based on test patterns
+- Real-time progress tracking with thread-safe updates
 
-## Use Cases
+#### Phase 3: Sequential Test Pattern Detection
+- Identifies `acceptance.RunTestsInSequence` patterns
+- Discovers additional test files through sequential relationships
 
-### Development Workflow
-- **Before making changes**: Identify which tests to run locally for any resource modification
-- **Code review**: Understand the comprehensive impact scope of resource modifications
-- **CI/CD optimization**: Use `-TestNamesOnly` to run only affected tests in pull requests
-- **Cross-repository analysis**: Run from any location by specifying the repository path
+#### Phase 4: Database Population
+- Multi-threaded population of core database tables
+- Creates Services, Files, Structs, TestFunctions records
+- Establishes foreign key relationships
 
-### Team Collaboration
-- **Impact analysis**: Generate and share comprehensive test coverage reports across teams
-- **Documentation**: Create dependency maps for complex resources and their test relationships
-- **Quality assurance**: Ensure complete test coverage - no tests are missed during resource updates
-- **Remote analysis**: Team members can analyze dependencies without cloning large repositories
+#### Phase 5: Resource and Configuration Reference Processing
+- Tracks direct resource usage (DirectResourceReferences)
+- Analyzes template functions (TemplateFunctions)
+- Maps template calls (TemplateReferences)
+- Resolves indirect dependencies (IndirectConfigReferences)
+
+#### Phase 6: Sequential References Population
+- Links sequential test entry points to referenced functions
+- Updates TestFunctions with entry point relationships
+- Builds SequentialReferences table
+- **Creates external stub records** for cross-resource sequential references
+  - Maintains referential integrity when sequential tests reference functions from other resources
+  - Stubs marked with `Line = 0`, `FunctionBody = "EXTERNAL_REFERENCE"`, and `ReferenceTypeId = 10`
+  - Ensures complete sequential test structure is visible in blast radius analysis
+
+#### Phase 7: Go Test Command Generation
+- Groups tests by Azure service
+- Generates optimized `go test` commands
+- Exports `go_test_commands.txt` file
+
+#### Phase 8: Database CSV Export
+- Exports all 12 database tables to CSV
+- Maintains proper column headers even for empty tables
+- Provides comprehensive dataset for analysis
+
+### Database Mode - Fast Query Operations
+
+Database Mode loads previously exported CSV files for instant analysis:
+
+#### Database Initialization
+- Imports all 12 CSV tables into in-memory database
+- Rebuilds indexes and foreign key relationships
+- Displays comprehensive statistics (typically 5-10 seconds)
+
+#### Query Operations
+- **ShowDirectReferences**: Display all direct resource usage
+- **ShowIndirectReferences**: Display template/configuration references
+- **ShowSequentialReferences**: Display sequential test patterns
+- **ShowCrossFileReferences**: Display cross-file struct dependencies
+- **ShowAllReferences**: Display all reference types in categorized view
+
+#### Benefits
+- **Speed**: Query operations complete in seconds vs minutes for Discovery Mode
+- **Portability**: Share CSV database without needing the source repository
+- **Analysis**: Multiple queries without re-scanning files
+- **Reporting**: Generate reports from structured data
+
+## Database Schema
+
+TerraCorder uses a **normalized relational database** with 12 tables:
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `Resources` | Master resource table | ResourceRefId (PK), ResourceName |
+| `Services` | Azure services | ServiceRefId (PK), Name, ResourceRefId (FK) |
+| `Files` | Test files | FileRefId (PK), FilePath, ServiceRefId (FK) |
+| `Structs` | Test resource structs | StructRefId (PK), StructName, FileRefId (FK), ResourceRefId (FK) |
+| `TestFunctions` | Test functions | TestFunctionRefId (PK), FunctionName, FileRefId (FK), StructRefId (FK), ResourceRefId (FK) |
+| `TestFunctionSteps` | Test steps/configs | TestFunctionStepRefId (PK), TestFunctionRefId (FK), ReferenceTypeId (FK) |
+| `TemplateFunctions` | Template methods | TemplateFunctionRefId (PK), TemplateFunctionName, StructRefId (FK), ResourceRefId (FK) |
+| `TemplateReferences` | Template calls | TemplateReferenceRefId (PK), TestFunctionRefId (FK), TemplateReference |
+| `DirectResourceReferences` | Direct usage | DirectRefId (PK), FileRefId (FK), ReferenceTypeId (FK) |
+| `IndirectConfigReferences` | Template deps | IndirectRefId (PK), TemplateReferenceRefId (FK), SourceTemplateFunctionRefId (FK) |
+| `SequentialReferences` | Sequential links | SequentialRefId (PK), EntryPointFunctionRefId (FK), ReferencedFunctionRefId (FK) |
+| `ReferenceTypes` | Reference lookup | ReferenceTypeId (PK), ReferenceTypeName |
+
+**Note**: The `Resources` table is the master table containing the Azure resource being analyzed (e.g., "azurerm_virtual_network"). Four tables (Services, Structs, TestFunctions, TemplateFunctions) contain `ResourceRefId` foreign keys linking them to the resource under analysis.
 
 ## Sample Output
 
-### Summary Format (`-Summary`)
+### Console Output
 ```
-Searching for tests using resource: 'azurerm_subnet'...
+============================================================
+ Terra-Corder - Database Initialization
+============================================================
+ [INFO] Creating Database Tables
+ [INFO] Populating ReferenceTypes Table
+Database Initialization: Completed in 15 ms
 
-Repository Summary:
+Phase 1: File Discovery and Filtering...
+ [INFO] Discovered 3,421 Test Files
+ [INFO] Filtered To 127 Relevant Files
+Phase 1: Completed in 245 ms
 
-  Files With Matches                    : 247
-  Total Direct Reference Matches        : 2558
-  Total Template Reference Matches      : 3159
-    - Total Matches Found               : 5721
-  Total Test Functions                  : 1457
-  Template Functions Containing Resource: 876
-  Unique Test Prefixes                  : 199
-  Total Services                        : 62
+Phase 2: Reading and Categorizing Relevant Test Files...
+ [INFO] Processing file 127 of 127 (100%) - Complete
+ [INFO] Processed 127 Files Using 8 Threads
+Phase 2: Completed in 1,234 ms
+
+Phase 3: Finding Additional Sequential Test Patterns...
+ [INFO] Found 12 Additional Sequential Test Files
+Phase 3: Completed in 15 ms
+
+Phase 4: Populating Database Tables...
+ [INFO] Populating database 139 of 139 (100%) - Complete
+ [INFO] Populated 139 Files Using 8 Threads
+Phase 4: Completed in 456 ms
+
+Phase 5: Populating Resource and Configuration References...
+ [INFO] Found 89 Direct Resource References
+ [INFO] Found 234 Test Configuration References
+ [INFO] Processing Test Configuration Indirect References
+ [INFO] Created 567 Indirect Configuration References
+Phase 5: Completed in 789 ms
+
+Phase 6: Populating SequentialReferences table...
+ [INFO] No Sequential Test Functions Detected - Skipping Sequential Processing
+Phase 6: Completed in 3 ms
+
+Phase 7: Generating go test commands...
+ [INFO] Generated Test Commands For 1 Service
+ [INFO] Exported: go_test_commands.txt
+Phase 7: Completed in 46 ms
+
+Phase 8: Exporting Database CSV Files...
+ [INFO] Exported: 12 Tables
+Phase 8: Completed in 61 ms
+
+============================================================
+ Required Acceptance Test Execution:
+============================================================
+
+  Service Name: resourcegroup
+    go test -timeout 30000s -v ./internal/services/resourcegroup -run "TestAccResourceGroup_"
+
+Total Execution Time: 3705 ms (3.7 seconds)
 ```
 
-### CI/CD Format (`-TestNamesOnly`)
+### CSV Export Files (in output directory)
 ```
-TestAccSubnet_basic
-TestAccSubnet_complete
-TestAccSubnet_delegation
-TestAccSubnet_requiresImport
-TestAccVirtualNetwork_withSubnet
-TestAccVirtualNetwork_multipleSubnets
-TestAccNetworkSecurityGroup_withSubnet
-[... 1450+ more test names]
-```
-
-### JSON Format (`-OutputFormat json`)
-```json
-{
-  "ResourceName": "azurerm_subnet",
-  "TotalMatches": 5721,
-  "TotalFiles": 247,
-  "Files": [
-    {
-      "File": "internal/services/network/subnet_resource_test.go",
-      "RelativePath": "./internal/services/network/subnet_resource_test.go",
-      "DirectMatches": 45,
-      "TemplateMatches": 12,
-      "TestFunctions": ["TestAccSubnet_basic", "TestAccSubnet_complete"],
-      "TemplateFunctions": ["basic", "complete", "requiresImport"]
-    },
-    {
-      "File": "internal/services/network/virtual_network_resource_test.go",
-      "RelativePath": "./internal/services/network/virtual_network_resource_test.go",
-      "DirectMatches": 8,
-      "TemplateMatches": 3,
-      "TestFunctions": ["TestAccVirtualNetwork_withSubnet"],
-      "TemplateFunctions": ["withSubnet"]
-    }
-  ],
-  "TemplateFunctionsWithResource": {
-    "basic": ["internal/services/network/subnet_resource_test.go"],
-    "complete": ["internal/services/network/subnet_resource_test.go"],
-    "withSubnet": ["internal/services/network/virtual_network_resource_test.go"]
-  }
-}
+Resources.csv                        - Master resource table (e.g., azurerm_virtual_network)
+Services.csv                         - All Azure services
+Files.csv                            - All test files
+Structs.csv                          - Test resource structs
+TestFunctions.csv                    - Test function records
+TestFunctionSteps.csv                - Individual test steps
+TemplateFunctions.csv                - Template methods
+TemplateReferences.csv               - Template method calls
+DirectResourceReferences.csv         - Direct resource usage
+IndirectConfigReferences.csv         - Template dependencies
+SequentialReferences.csv             - Sequential test links
+ReferenceTypes.csv                   - Reference type lookup
+go_test_commands.txt                 - Generated test commands
 ```
 
 ## Parameters
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `-ResourceName` | **Required**. Azure resource to search for | `"azurerm_subnet"` |
-| `-RepositoryPath` | **Required**. Path to terraform-provider-azurerm repository root. | `"C:\terraform-provider-azurerm"` |
-| `-ShowDetails` | Include line numbers and context in output | Switch parameter |
-| `-OutputFormat` | Output format: `list` (default), `json`, `csv` | `"json"` |
-| `-TestFile` | Analyze specific file only (relative to repository root) | `"internal/services/network/subnet_test.go"` |
-| `-TestNamesOnly` | **CI/CD Mode**. Output only clean test function names (one per line) | Switch parameter |
-| `-TestPrefixes` | Output unique test prefixes for batch execution | Switch parameter |
-| `-Summary` | **Recommended for development**. Concise summary format with totals and statistics - most useful during resource development | Switch parameter |
+### Discovery Mode Parameters
+| Parameter | Required | Description | Default | Example |
+|-----------|----------|-------------|---------|---------|
+| `-ResourceName` | **Yes** | Azure resource name to analyze | - | `"azurerm_subnet"` |
+| `-RepositoryDirectory` | **Yes** | Path to terraform-provider-azurerm repository root | - | `"C:\terraform-provider-azurerm"` |
+| `-ExportDirectory` | No | Directory for CSV exports and output files | `./output` | `"C:\analysis\output"` |
+
+### Database Mode Parameters
+| Parameter | Required | Description | Default | Example |
+|-----------|----------|-------------|---------|---------|
+| `-DatabaseDirectory` | **Yes** | Directory containing CSV database files | - | `"output"` or `"C:\analysis\output"` |
+| `-ShowDirectReferences` | No* | Display direct resource references | - | Switch parameter |
+| `-ShowIndirectReferences` | No* | Display indirect/template references | - | Switch parameter |
+| `-ShowSequentialReferences` | No* | Display sequential test patterns | - | Switch parameter |
+| `-ShowCrossFileReferences` | No* | Display cross-file struct dependencies | - | Switch parameter |
+| `-ShowAllReferences` | No* | Display all reference types combined | - | Switch parameter |
+
+*At least one Show parameter must be specified in Database Mode
 
 ## Troubleshooting
 
-### Repository Path Issues
+### PowerShell Version Issues
 
-If TerraCorder cannot find your terraform-provider-azurerm repository, you'll see a clear error message with solutions:
+TerraCorder requires **PowerShell Core 7.0 or later**. You'll see a clear error if your version is unsupported:
 
 ```
-Error: Unable to find the terraform-provider-azurerm repository root directory.
+ERROR: PowerShell Core 7.0 or later required.
 
-  Please specify the repository path using the -RepositoryPath parameter:
-    .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryPath "C:\path\to\terraform-provider-azurerm"
+Current environment:
+  Edition: Desktop
+  Version: 5.1.19041.5247
 
-  Or run this script from within the terraform-provider-azurerm directory structure:
-    cd C:\path\to\terraform-provider-azurerm
-    C:\path\to\terracorder.ps1 -ResourceName "azurerm_subnet"
+Required:
+  Edition: Core
+  Version: 7.0 or later
+```
+
+**Solution**: Install PowerShell Core 7.x from https://github.com/PowerShell/PowerShell
+
+### Repository Path Issues
+
+If the repository path is invalid, you'll see:
+
+```
+Error: The specified repository path does not exist or is not accessible:
+  C:\invalid\path\terraform-provider-azurerm
+
+Please verify:
+  1. The path exists and is accessible
+  2. You have read permissions for the directory
+  3. The path points to the terraform-provider-azurerm repository root
 ```
 
 **Solutions:**
-1. **Specify the full path** to your terraform-provider-azurerm repository using `-RepositoryPath`
-2. **Run from within the repository** - TerraCorder will auto-detect the repository root
-3. **Verify the path exists** and contains the expected `internal/services` directory structure
+1. Verify the path exists: `Test-Path "C:\path\to\terraform-provider-azurerm"`
+2. Check for the `internal/services` directory structure
+3. Use absolute paths, not relative paths
 
-## Requirements
+### Performance Optimization
 
-- **PowerShell**: 5.1 or PowerShell Core 6.0+
-- **Operating System**: Windows, Linux, or macOS
-- **Terraform AzureRM Provider**: Source code (for scanning)
+For large repositories:
+- **Thread count** is automatically optimized (2-8 threads based on CPU cores)
+- **Memory usage** peaks during Phase 2 (file reading) and Phase 4 (database population)
+- **Disk I/O** is highest during Phase 8 (CSV export)
+
+To improve performance:
+- Use SSD storage for the repository and export directory
+- Ensure sufficient RAM (4GB+ recommended)
+- Close other resource-intensive applications
 
 ## Installation
 
-### Option 1: Direct Download
-```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/scripts/terracorder.ps1" -OutFile "terracorder.ps1"
-```
-
-### Option 2: Git Clone
+### Recommended: Git Clone
 ```powershell
 git clone https://github.com/WodansSon/terraform-terracorder.git
+cd terraform-terracorder
 ```
 
-### Option 3: PowerShell Gallery (Coming Soon)
-```powershell
-Install-Script -Name TerraCorder
-```
+### Alternative: Manual Download
+See the "Manual Download" section in [Quick Start](#quick-start) for detailed instructions on downloading all required files.
 
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
-### Development Setup
-```powershell
-# Clone the repository
-git clone https://github.com/WodansSon/terraform-terracorder.git
-cd terraform-terracorder
-
-# Run tests
-.\tests\run-tests.ps1
-
-# Run with test data
-.\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -TestConsoleWidth 80
-```
-
 ## Issues and Support
 
 - **Bug Reports**: [GitHub Issues](https://github.com/WodansSon/terraform-terracorder/issues)
 - **Feature Requests**: [GitHub Discussions](https://github.com/WodansSon/terraform-terracorder/discussions)
-- **Documentation**: [Wiki](https://github.com/WodansSon/terraform-terracorder/wiki)
-
-## Roadmap
-
-- [ ] **v2.0**: Multi-provider support (AWS, GCP)
-- [ ] **v2.1**: Integration with GitHub Actions
-- [ ] **v2.2**: Visual dependency graphs
-- [ ] **v2.3**: Test execution time estimation
-- [ ] **v2.4**: PowerShell Gallery publication
+- **Documentation**: See database schema documentation in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)
 
 ## License
 
@@ -327,9 +453,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- Inspired by the complexity of Terraform provider testing
 - Built for the Terraform AzureRM provider community
-- Special thanks to all contributors and testers
+- Designed for comprehensive test dependency analysis
+- Optimized for multi-threaded performance on modern hardware
 
 ---
 
@@ -337,6 +463,35 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **[Back to Top](#terracorder)**
 
-Made with love for the Terraform community
+*Comprehensive test analysis through relational database intelligence*
 
 </div>
+
+## Requirements
+
+- **PowerShell**: PowerShell Core 7.0 or later (required for multi-threading)
+- **Operating System**: Windows, Linux, or macOS
+- **Memory**: Recommended 4GB+ for large repositories
+- **Terraform AzureRM Provider**: Source code for analysis
+
+## Use Cases
+
+### Development Workflow
+- **Pre-modification analysis**: Identify all tests to run before changing a resource
+- **Impact assessment**: Understand the full scope of test coverage for any resource
+- **Database exploration**: Query CSV exports to find patterns and relationships
+- **Performance optimization**: Identify test bottlenecks through comprehensive data
+
+### Data Analysis
+- **Cross-service dependencies**: Analyze how tests span multiple Azure services
+- **Template usage patterns**: Study how template functions are reused across tests
+- **Sequential test chains**: Map complex test execution dependencies
+- **Reference type distribution**: Understand direct vs. indirect test relationships
+
+### CI/CD Integration
+- **Test command generation**: Use generated `go_test_commands.txt` in pipelines
+- **Selective test execution**: Run only tests affected by resource changes
+- **Batch processing**: Group tests by service for parallel execution
+- **Coverage validation**: Ensure all necessary tests are included
+
+## Troubleshooting
