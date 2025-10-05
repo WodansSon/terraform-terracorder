@@ -27,8 +27,10 @@ A high-performance **database-driven** Terraform test analysis tool that identif
 ### Database Mode (Query Existing Data)
 - **Fast Query Operations**: Analyze previously discovered data in seconds, not minutes
 - **No File Scanning**: Load from CSV exports instantly without repository access
-- **Multiple Query Types**: Direct references, indirect references, sequential patterns, cross-file dependencies, or all combined
+- **Default Statistics View**: Run without flags to see available analysis options
+- **Multiple Query Types**: Direct references, indirect references (includes templates and sequential patterns), or all combined
 - **Data Exploration**: Perfect for analysis, reporting, and understanding test relationships
+- **Syntax Highlighting**: Color-coded output with VS Code theme detection for enhanced readability (requires terminal ANSI support)
 - **Cross-Platform**: Works on Windows, Linux, and macOS with PowerShell Core 7.0+
 
 ## Quick Start
@@ -45,6 +47,9 @@ cd terraform-terracorder
 
 # Run Database Mode (query existing data)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowDirectReferences
+
+# Run Database Mode (view available options)
+.\scripts\terracorder.ps1 -DatabaseDirectory "output"
 
 # Specify custom export directory
 .\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm" -ExportDirectory "C:\analysis\output"
@@ -64,6 +69,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-te
 # Download required modules
 $modules = @(
     "Database.psm1",
+    "DatabaseMode.psm1",
     "FileDiscovery.psm1",
     "PatternAnalysis.psm1",
     "ProcessingCore.psm1",
@@ -99,19 +105,16 @@ cd terracorder
 
 ### Database Mode - Query Existing Data
 ```powershell
+# View available analysis options (default - no flags required)
+.\scripts\terracorder.ps1 -DatabaseDirectory "output"
+
 # Show direct resource references (fast, no file scanning)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowDirectReferences
 
-# Show indirect/template references
+# Show indirect references (includes templates and sequential patterns)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowIndirectReferences
 
-# Show sequential test patterns
-.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowSequentialReferences
-
-# Show cross-file struct dependencies
-.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowCrossFileReferences
-
-# Show all reference types combined
+# Show all reference types combined (complete blast radius analysis)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowAllReferences
 
 # Use custom database location
@@ -243,18 +246,18 @@ Database Mode loads previously exported CSV files for instant analysis:
 - Rebuilds indexes and foreign key relationships
 - Displays comprehensive statistics (typically 5-10 seconds)
 
-#### Query Operations
-- **ShowDirectReferences**: Display all direct resource usage
-- **ShowIndirectReferences**: Display template/configuration references
-- **ShowSequentialReferences**: Display sequential test patterns
-- **ShowCrossFileReferences**: Display cross-file struct dependencies
-- **ShowAllReferences**: Display all reference types in categorized view
+#### Query Operations (All Optional)
+- **No flags (default)**: Display available analysis options with examples
+- **ShowDirectReferences**: Display all direct resource usage and attribute references
+- **ShowIndirectReferences**: Display template dependencies and sequential test chains
+- **ShowAllReferences**: Display complete blast radius analysis (Direct + Indirect)
 
 #### Benefits
 - **Speed**: Query operations complete in seconds vs minutes for Discovery Mode
 - **Portability**: Share CSV database without needing the source repository
 - **Analysis**: Multiple queries without re-scanning files
 - **Reporting**: Generate reports from structured data
+- **Progressive Discovery**: View options first, then choose your analysis
 
 ## Database Schema
 
@@ -367,13 +370,11 @@ go_test_commands.txt                 - Generated test commands
 | Parameter | Required | Description | Default | Example |
 |-----------|----------|-------------|---------|---------|
 | `-DatabaseDirectory` | **Yes** | Directory containing CSV database files | - | `"output"` or `"C:\analysis\output"` |
-| `-ShowDirectReferences` | No* | Display direct resource references | - | Switch parameter |
-| `-ShowIndirectReferences` | No* | Display indirect/template references | - | Switch parameter |
-| `-ShowSequentialReferences` | No* | Display sequential test patterns | - | Switch parameter |
-| `-ShowCrossFileReferences` | No* | Display cross-file struct dependencies | - | Switch parameter |
-| `-ShowAllReferences` | No* | Display all reference types combined | - | Switch parameter |
+| `-ShowDirectReferences` | No | Display direct resource references | Shows available options | Switch parameter |
+| `-ShowIndirectReferences` | No | Display indirect references (templates + sequential) | Shows available options | Switch parameter |
+| `-ShowAllReferences` | No | Display all reference types (complete analysis) | Shows available options | Switch parameter |
 
-*At least one Show parameter must be specified in Database Mode
+**Note**: If no Show parameter is specified, Database Mode displays available analysis options and examples.
 
 ## Troubleshooting
 

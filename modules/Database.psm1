@@ -1813,13 +1813,13 @@ function Import-DatabaseFromCSV {
                 ResourceName = $row.ResourceName
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: Resources ($($script:Resources.Count) records)" -HighlightTexts @("Resources", "$($script:Resources.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Resources", $script:Resources.Count) -HighlightTexts @("Resources", "$($script:Resources.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # ReferenceTypes are statically initialized in the module at startup, no import needed
         # Just validate the file exists and show confirmation message
         $referenceTypesPath = Join-Path $DatabaseDirectory "ReferenceTypes.csv"
         if (Test-Path $referenceTypesPath) {
-            Show-PhaseMessageHighlight -Message "Validated: ReferenceTypes ($($script:ReferenceTypes.Count) types)" -HighlightText "$($script:ReferenceTypes.Count)" -HighlightColor $NumberColor -BaseColor $BaseColor -InfoColor $InfoColor
+            Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} {3,-7})" -f "Validated", "ReferenceTypes", $script:ReferenceTypes.Count, "types") -HighlightTexts @("ReferenceTypes", "$($script:ReferenceTypes.Count)", "types") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
         }
 
         # Import Services
@@ -1838,7 +1838,7 @@ function Import-DatabaseFromCSV {
                 $script:ServiceRefIdCounter = $serviceRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: Services ($($script:Services.Count) records)" -HighlightTexts @("Services", "$($script:Services.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Services", $script:Services.Count) -HighlightTexts @("Services", "$($script:Services.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import Files
         $filesPath = Join-Path $DatabaseDirectory "Files.csv"
@@ -1858,7 +1858,7 @@ function Import-DatabaseFromCSV {
                 $script:FileRefIdCounter = $fileRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: Files ($($script:Files.Count) records)" -HighlightTexts @("Files", "$($script:Files.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Files", $script:Files.Count) -HighlightTexts @("Files", "$($script:Files.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import Structs
         $structsPath = Join-Path $DatabaseDirectory "Structs.csv"
@@ -1894,7 +1894,7 @@ function Import-DatabaseFromCSV {
                 $script:StructRefIdCounter = $structRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: Structs ($($script:Structs.Count) records)" -HighlightTexts @("Structs", "$($script:Structs.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Structs", $script:Structs.Count) -HighlightTexts @("Structs", "$($script:Structs.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TestFunctions
         $testFunctionsPath = Join-Path $DatabaseDirectory "TestFunctions.csv"
@@ -1928,7 +1928,7 @@ function Import-DatabaseFromCSV {
                 $script:FunctionRefIdCounter = $testFunctionRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: TestFunctions ($($script:TestFunctions.Count) records)" -HighlightTexts @("TestFunctions", "$($script:TestFunctions.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TestFunctions", $script:TestFunctions.Count) -HighlightTexts @("TestFunctions", "$($script:TestFunctions.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TestFunctionSteps
         $testFunctionStepsPath = Join-Path $DatabaseDirectory "TestFunctionSteps.csv"
@@ -1959,7 +1959,7 @@ function Import-DatabaseFromCSV {
                 $script:TestFunctionStepsByRefTypeIndex[$referenceTypeId] += $testFunctionStepRefId
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: TestFunctionSteps ($($script:TestFunctionSteps.Count) records)" -HighlightTexts @("TestFunctionSteps", "$($script:TestFunctionSteps.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TestFunctionSteps", $script:TestFunctionSteps.Count) -HighlightTexts @("TestFunctionSteps", "$($script:TestFunctionSteps.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import DirectResourceReferences
         $directReferencesPath = Join-Path $DatabaseDirectory "DirectResourceReferences.csv"
@@ -1982,7 +1982,7 @@ function Import-DatabaseFromCSV {
                 $script:DirectRefIdCounter = $directRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: DirectResourceReferences ($($script:DirectResourceReferences.Count) records)" -HighlightTexts @("DirectResourceReferences", "$($script:DirectResourceReferences.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "DirectResourceReferences", $script:DirectResourceReferences.Count) -HighlightTexts @("DirectResourceReferences", "$($script:DirectResourceReferences.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import IndirectConfigReferences
         $indirectReferencesPath = Join-Path $DatabaseDirectory "IndirectConfigReferences.csv"
@@ -2008,7 +2008,7 @@ function Import-DatabaseFromCSV {
                 $script:IndirectRefIdCounter = $indirectRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: IndirectConfigReferences ($($script:IndirectConfigReferences.Count) records)" -HighlightTexts @("IndirectConfigReferences", "$($script:IndirectConfigReferences.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "IndirectConfigReferences", $script:IndirectConfigReferences.Count) -HighlightTexts @("IndirectConfigReferences", "$($script:IndirectConfigReferences.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TemplateFunctions
         $templateFunctionsPath = Join-Path $DatabaseDirectory "TemplateFunctions.csv"
@@ -2035,7 +2035,7 @@ function Import-DatabaseFromCSV {
                 $script:TemplateFunctionRefIdCounter = $templateFunctionRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: TemplateFunctions ($($script:TemplateFunctions.Count) records)" -HighlightTexts @("TemplateFunctions", "$($script:TemplateFunctions.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TemplateFunctions", $script:TemplateFunctions.Count) -HighlightTexts @("TemplateFunctions", "$($script:TemplateFunctions.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import SequentialReferences
         $sequentialReferencesPath = Join-Path $DatabaseDirectory "SequentialReferences.csv"
@@ -2057,7 +2057,7 @@ function Import-DatabaseFromCSV {
                 $script:SequentialRefIdCounter = $sequentialRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: SequentialReferences ($($script:SequentialReferences.Count) records)" -HighlightTexts @("SequentialReferences", "$($script:SequentialReferences.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "SequentialReferences", $script:SequentialReferences.Count) -HighlightTexts @("SequentialReferences", "$($script:SequentialReferences.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TemplateReferences
         $templateReferencesPath = Join-Path $DatabaseDirectory "TemplateReferences.csv"
@@ -2082,18 +2082,18 @@ function Import-DatabaseFromCSV {
                 $script:TemplateReferenceRefIdCounter = $templateReferenceRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message "Loaded: TemplateReferences ($($script:TemplateReferences.Count) records)" -HighlightTexts @("TemplateReferences", "$($script:TemplateReferences.Count)") -HighlightColors @($ItemColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TemplateReferences", $script:TemplateReferences.Count) -HighlightTexts @("TemplateReferences", "$($script:TemplateReferences.Count)", "records") -HighlightColors @($ItemColor, $NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
 
         $importElapsed = (Get-Date) - $importStart
 
         # Build summary statistics
-        $totalRecords = $script:Services.Count + $script:Files.Count + $script:Structs.Count +
-                       $script:TestFunctions.Count + $script:TestFunctionSteps.Count +
-                       $script:DirectResourceReferences.Count + $script:IndirectConfigReferences.Count +
-                       $script:TemplateFunctions.Count + $script:SequentialReferences.Count +
-                       $script:TemplateReferences.Count
+        $totalRecords = $script:Resources.Count + $script:ReferenceTypes.Count + $script:Services.Count +
+                       $script:Files.Count + $script:Structs.Count + $script:TestFunctions.Count +
+                       $script:TestFunctionSteps.Count + $script:DirectResourceReferences.Count +
+                       $script:IndirectConfigReferences.Count + $script:TemplateFunctions.Count +
+                       $script:SequentialReferences.Count + $script:TemplateReferences.Count
 
-        Show-PhaseMessageHighlight -Message "Imported $totalRecords Records" -HighlightText $totalRecords -HighlightColor $NumberColor -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1} Records" -f "Imported", $totalRecords) -HighlightTexts @("$totalRecords", "Records") -HighlightColors @($NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
         Show-PhaseCompletionGeneric -Description "Database Initialization" -DurationMs $([math]::Round($importElapsed.TotalMilliseconds, 0))
 
         return [PSCustomObject]@{

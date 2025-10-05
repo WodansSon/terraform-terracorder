@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Smart spacing and indentation for visual hierarchy
   - Color-coded display showing external references vs. tracked functions
   - "External Reference (Not Tracked)" indicator for cross-resource dependencies
+- **Syntax Highlighting**: VS Code theme-aware color coding for database query output
+  - Automatic detection of VS Code Dark+ and Light+ themes
+  - Color-coded syntax elements (functions, line numbers, strings, variables, labels, highlights)
+  - Enhanced readability with proper contrast and semantic coloring
+  - Graceful fallback for terminals without ANSI support
+  - Maintains clean output formatting across all display modes
 - **Blast Radius Analysis**: Executive summary of change impact
   - Total impact count (template + sequential dependencies)
   - Service impact classification (SAME_SERVICE vs. CROSS_SERVICE)
@@ -42,6 +48,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Complete referential integrity maintained throughout discovery process
 
 ### Changed
+- **Database Mode API Simplification**: Streamlined query parameters for better usability
+  - Removed `-ShowSequentialReferences` and `-ShowCrossFileReferences` parameters (redundant with `-ShowIndirectReferences`)
+  - Sequential and cross-file references already included in indirect references view
+  - Simplified from 5 query options to 3: Direct, Indirect, and All
+  - Clearer user intent with more intuitive parameter names
+- **Default Behavior Enhancement**: Improved discoverability and user experience
+  - Running Database Mode without query flags now shows available analysis options
+  - New `Show-DatabaseStatistics` function displays simplified database overview
+  - Progressive discovery: view options first, then choose specific analysis
+  - All `-Show*` parameters now truly optional (no flags required)
+  - Execution time for default statistics view: ~0.2 seconds
+- **Syntax Highlighting Refinement**: Improved visual consistency and color scheme
+  - Normalized file header display with `./` prefix in both direct and indirect modes
+  - Unified resource name highlighting using `StringHighlight` color (#d7a895 - lighter peachy-salmon)
+  - Subtle, professional highlighting that doesn't overwhelm the output
+  - Consistent color scheme across all database query display modes
 - **Output Organization**: Improved spacing and formatting in all display functions
   - Consistent blank line handling between sections
   - Proper function separation in template references
@@ -52,6 +74,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed unused indent variables (`$indent1`, `$indent2`, `$indent3`)
 - **Code Quality**: Cleanup of dead code and improved maintainability
   - Removed VSCode-flagged unused variables
+
+### Performance
+- **Syntax Highlighting Optimization**: Precompiled regex patterns for ~3x performance improvement
+  - Module-level precompiled regex patterns (`ResourceOrData`, `AzureResourceName`, `ServicePath`, `Whitespace`)
+  - Switched from PowerShell `-match`/`-replace` operators to compiled `[regex]::Match()` and `[regex]::Replace()`
+  - Regex compiled once at module load with `RegexOptions.Compiled` flag
+  - Reduces database query output time from ~9 seconds to ~3 seconds for large result sets
+  - Zero functional changes - output remains identical
   - Better inline comments explaining complex tree rendering logic
 
 ### Fixed
@@ -177,7 +207,7 @@ Corrections to existing functionality
 ### Performance
 Improvements to speed or resource usage
 
-### 🔒 Security
+### Security
 Security-related changes and improvements
 
 ### Documentation

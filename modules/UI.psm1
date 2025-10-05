@@ -10,6 +10,105 @@
     All color values are provided by the main script - this module has no color defaults.
 #>
 
+function Get-VSCodeSyntaxColors {
+    <#
+    .SYNOPSIS
+        Returns a hashtable of VS Code Dark+ theme syntax highlighting colors
+
+    .DESCRIPTION
+        Provides a centralized color scheme matching VS Code's Dark+ theme for syntax highlighting.
+        These hex colors correspond to how different code elements appear in VS Code.
+
+    .OUTPUTS
+        Hashtable with color names and their hex values
+
+    .EXAMPLE
+        $colors = Get-VSCodeSyntaxColors
+        Write-HostRGB "resource" $colors.Keyword -NoNewline
+        Write-HostRGB "azurerm_resource_group" $colors.Type
+    #>
+    return @{
+        # Core syntax colors
+        Keyword         = "#569CD6"  # Blue - Keywords (resource, data, var, func, if, else, for, while, return)
+        Type            = "#4EC9B0"  # Teal - Types, struct names, interface names
+        String          = "#CE9178"  # Salmon - String literals, regex groups
+        Number          = "#B5CEA8"  # Light green - Numeric literals
+        Comment         = "#6A9955"  # Green - Comments
+        Function        = "#DCDCAA"  # Gold - Function names, methods, custom literals
+        Variable        = "#9CDCFE"  # Light blue - Variables, parameters, properties, format specifiers
+        Constant        = "#4FC1FF"  # Bright blue - Constants, enum members
+        ControlFlow     = "#C586C0"  # Purple - Control flow keywords, new operator
+
+        # Special highlighting
+        Highlight       = "#9CDCFE"  # Light blue - Emphasized elements (resource names, tree structure, keys)
+        HighlightAlt    = "#FF7F50"  # Coral - Alternative emphasis (sequential keys, special values)
+        StringHighlight = "#d7a895"  # Lighter peachy-salmon - String highlighting for resource names
+
+        # UI colors
+        LineNumber      = "#808080"  # Medium gray - Line numbers in output (visible in PowerShell console)
+        LineNumberMuted = "#C0C0C0"  # Light gray - Muted/subdued line numbers (50% lighter than LineNumber)
+
+        # Special characters and escape sequences
+        EscapeChar      = "#D7BA7D"  # Muted gold - Escape sequences (\n, \t), regex quantifiers
+
+        # Regex colors
+        RegexClass      = "#D16969"  # Muted red - Regex character classes
+
+        # Labels
+        Label           = "#C8C8C8"  # Neutral gray - Goto labels
+
+        # Bracket pair colorization (cycling levels)
+        BracketLevel1   = "#FFD700"  # Gold - Outermost brackets (Level 1)
+        BracketLevel2   = "#DA70D6"  # Orchid/Pink - Middle brackets (Level 2)
+        BracketLevel3   = "#179FFF"  # Bright blue - Innermost brackets (Level 3)
+    }
+}
+
+function Write-HostRGB {
+    <#
+    .SYNOPSIS
+        Write colored text using RGB/Hex colors (requires PowerShell 7+)
+
+    .PARAMETER Text
+        The text to display
+
+    .PARAMETER HexColor
+        Hex color code (e.g., "#569CD6")
+
+    .PARAMETER NoNewline
+        Suppress newline after output
+
+    .EXAMPLE
+        Write-HostRGB "resource" "#569CD6" -NoNewline
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+
+        [Parameter(Mandatory = $true)]
+        [string]$HexColor,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$NoNewline
+    )
+
+    # Convert hex to RGB
+    $hex = $HexColor.TrimStart('#')
+    $r = [Convert]::ToInt32($hex.Substring(0,2), 16)
+    $g = [Convert]::ToInt32($hex.Substring(2,2), 16)
+    $b = [Convert]::ToInt32($hex.Substring(4,2), 16)
+
+    $esc = [char]27
+    $colorCode = "$esc[38;2;${r};${g};${b}m"
+    $reset = "$esc[0m"
+
+    if ($NoNewline) {
+        Write-Host "${colorCode}${Text}${reset}" -NoNewline
+    } else {
+        Write-Host "${colorCode}${Text}${reset}"
+    }
+}
+
 function Show-InitialBanner {
     <#
     .SYNOPSIS
@@ -51,24 +150,32 @@ function Show-InitialBanner {
     Write-Host ""
     Write-Separator
     Write-Host "`e]0;Terra-Corder v$Global:TerraCoderVersion`a" -NoNewline  # Set window title
+
     $banner = @"
   _____                     ____              _
  |_   _|__ _ __ _ __ __ _  / ___|___  _ __ __| | ___ _ __
    | |/ _ \ '__| '__/ _`` || |   / _ \| '__/ _`` |/ _ \ '__|
    | |  __/ |  | | | (_| || |__| (_) | | | (_| |  __/ |
-   |_|\___|_|  |_|  \__,_| \____\___/|_|  \__,_|\___|_|
+   | |\   | |  | |  \  , | \    \   /| |  \  , |\   | |
+    ‾  ‾‾‾ ‾    ‾    ‾‾ ‾   ‾‾‾‾ ‾‾‾  ‾    ‾‾ ‾  ‾‾‾ ‾
 "@
-    # Split banner into lines and apply rainbow colors
+    # Split banner into lines and apply smooth RGB gradient (red -> coral -> gold -> yellow-green -> ocean blue -> dark blue)
     $bannerLines = $banner -split "`n"
-    $rainbowColors = @("Red", "Yellow", "Green", "Cyan", "Blue")
+    $gradientColors = @(
+        "#E74C3C",  # Hard red
+        "#FFA06B",  # Coral/salmon
+        "#FFD56B",  # Soft gold
+        "#A8D08D",  # Yellow-green (warmer bridge to blue)
+        "#5AC8FA",  # Ocean blue
+        "#3498DB"   # Dark blue (base of ASCII art)
+    )
 
     for ($i = 0; $i -lt $bannerLines.Count; $i++) {
-        $colorIndex = $i % $rainbowColors.Count
-        Write-Host $bannerLines[$i] -ForegroundColor $rainbowColors[$colorIndex]
+        $colorIndex = $i % $gradientColors.Count
+        Write-HostRGB $bannerLines[$i] $gradientColors[$colorIndex]
     }
 
     Write-Host "`e[0m" -NoNewline  # Reset formatting
-    Write-Host ""
     Write-Host "   Terraform AzureRM Provider Test Usage Discovery Tool" -ForegroundColor Cyan
     Write-Host "   Version: $Global:TerraCoderVersion" -ForegroundColor Cyan
     Write-Host ""
@@ -450,8 +557,23 @@ function Write-Separator {
         Writes a separator line of 60 equal sign characters.
     .DESCRIPTION
         Outputs a line of 60 equal sign characters to create a visual separator.
+        Optionally supports indentation for nested separators.
+    .PARAMETER Indent
+        Number of spaces to indent the separator (default: 0)
+    .EXAMPLE
+        Write-Separator
+        # Outputs: ============================================================
+    .EXAMPLE
+        Write-Separator -Indent 4
+        # Outputs:     ============================================================
     #>
-    Write-Host ("=" * 60) -ForegroundColor Cyan
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$Indent = 0
+    )
+
+    $indentString = " " * $Indent
+    Write-Host "$indentString$("=" * 60)" -ForegroundColor Cyan
 }
 
 function Write-ColoredText {
@@ -729,10 +851,119 @@ function Show-MissingParametersError {
     Write-Host ""
 }
 
+function Show-ComprehensiveHelp {
+    <#
+    .SYNOPSIS
+        Display comprehensive help for terracorder.ps1
+
+    .DESCRIPTION
+        Shows detailed usage information, parameters, modes, and examples
+        for the TerraCorder script.
+
+    .EXAMPLE
+        Show-ComprehensiveHelp
+    #>
+
+    Write-Host ""
+    Write-Host "====================================================================" -ForegroundColor Cyan
+    Write-Host "  TERRACORDER - Terraform AzureRM Provider Test Usage Discovery" -ForegroundColor Cyan
+    Write-Host "====================================================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    Write-Host "SYNOPSIS:" -ForegroundColor Yellow
+    Write-Host "  Find tests to run when modifying a specific Azure resource"
+    Write-Host ""
+
+    Write-Host "USAGE:" -ForegroundColor Yellow
+    Write-Host "  Two Modes Available:"
+    Write-Host ""
+    Write-Host "  1. " -NoNewline
+    Write-Host "DISCOVERY MODE" -ForegroundColor Cyan -NoNewline
+    Write-Host " (Full Repository Scan):"
+    Write-Host "     .\terracorder.ps1 -ResourceName " -NoNewline
+    Write-Host '"azurerm_subnet"' -ForegroundColor Green -NoNewline
+    Write-Host " -RepositoryDirectory " -NoNewline
+    Write-Host '"C:\path\to\terraform-provider-azurerm"' -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  2. " -NoNewline
+    Write-Host "DATABASE MODE" -ForegroundColor Cyan -NoNewline
+    Write-Host " (Query Existing Data):"
+    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
+    Write-Host '".\output"' -ForegroundColor Green -NoNewline
+    Write-Host "                    # Show available options"
+    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
+    Write-Host '".\output"' -ForegroundColor Green -NoNewline
+    Write-Host " -ShowDirectReferences"
+    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
+    Write-Host '".\output"' -ForegroundColor Green -NoNewline
+    Write-Host " -ShowIndirectReferences"
+    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
+    Write-Host '".\output"' -ForegroundColor Green -NoNewline
+    Write-Host " -ShowAllReferences"
+    Write-Host ""
+
+    Write-Host "PARAMETERS:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Discovery Mode:" -ForegroundColor Cyan
+    Write-Host "    -ResourceName           Azure resource name (e.g., azurerm_subnet)"
+    Write-Host "    -RepositoryDirectory    Path to terraform-provider-azurerm repository root"
+    Write-Host "    -ExportDirectory        CSV export directory (default: ../output)"
+    Write-Host ""
+    Write-Host "  Database Mode:" -ForegroundColor Cyan
+    Write-Host "    -DatabaseDirectory      Path to existing CSV database"
+    Write-Host "    -ShowDirectReferences   Display direct resource/data declarations"
+    Write-Host "    -ShowIndirectReferences Display template dependencies and sequential chains"
+    Write-Host "    -ShowAllReferences      Display complete analysis (Direct + Indirect)"
+    Write-Host "    -ExportDirectory        CSV database directory (default: ../output)"
+    Write-Host ""
+    Write-Host "  General:" -ForegroundColor Cyan
+    Write-Host "    -Help                   Display this help message"
+    Write-Host ""
+
+    Write-Host "DESCRIPTION:" -ForegroundColor Yellow
+    Write-Host "  " -NoNewline
+    Write-Host "DISCOVERY MODE" -ForegroundColor Cyan -NoNewline
+    Write-Host " scans repository files, runs all 8 phases, populates"
+    Write-Host "  database, exports CSVs, and generates go test commands."
+    Write-Host ""
+    Write-Host "  " -NoNewline
+    Write-Host "DATABASE MODE" -ForegroundColor Cyan -NoNewline
+    Write-Host " loads existing CSV database for fast, repeatable queries"
+    Write-Host "  and visualization without re-scanning files."
+    Write-Host ""
+    Write-Host "  If no Show* parameter is specified in Database Mode, displays"
+    Write-Host "  available analysis options and database statistics."
+    Write-Host ""
+
+    Write-Host "EXAMPLES:" -ForegroundColor Yellow
+    Write-Host "  # Full discovery scan"
+    Write-Host "  .\terracorder.ps1 -ResourceName " -NoNewline
+    Write-Host '"azurerm_subnet"' -ForegroundColor Green -NoNewline
+    Write-Host " -RepositoryDirectory " -NoNewline
+    Write-Host '"C:\repos\terraform-provider-azurerm"' -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  # Query existing database - show options"
+    Write-Host "  .\terracorder.ps1 -DatabaseDirectory " -NoNewline
+    Write-Host '".\output"' -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  # Query existing database - direct references"
+    Write-Host "  .\terracorder.ps1 -DatabaseDirectory " -NoNewline
+    Write-Host '".\output"' -ForegroundColor Green -NoNewline
+    Write-Host " -ShowDirectReferences"
+    Write-Host ""
+    Write-Host "  # Query existing database - all references"
+    Write-Host "  .\terracorder.ps1 -DatabaseDirectory " -NoNewline
+    Write-Host '".\output"' -ForegroundColor Green -NoNewline
+    Write-Host " -ShowAllReferences"
+    Write-Host ""
+}
+
 #endregion Error Display Functions
 
 # Export functions
 Export-ModuleMember -Function @(
+    'Get-VSCodeSyntaxColors',
+    'Write-HostRGB',
     'Show-InitialBanner',
     'Show-PhaseHeader',
     'Show-PhaseHeaderGeneric',
@@ -750,5 +981,6 @@ Export-ModuleMember -Function @(
     'Show-MutuallyExclusiveModesError',
     'Show-DirectoryNotFoundError',
     'Show-InvalidResourceNameError',
-    'Show-MissingParametersError'
+    'Show-MissingParametersError',
+    'Show-ComprehensiveHelp'
 )

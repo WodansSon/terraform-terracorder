@@ -17,6 +17,8 @@
     Loads existing CSV database and provides deep analysis without re-scanning files.
     Use this mode for fast, repeatable queries and visualization of previously discovered data.
 
+    If no Show* parameter is specified in Database Mode, displays database statistics only.
+
 .PARAMETER ResourceName
     [Discovery Mode] The Azure resource name to search for (e.g., azurerm_subnet)
 
@@ -30,19 +32,13 @@
     Directory path where CSV export files will be stored (defaults to ../output)
 
 .PARAMETER ShowDirectReferences
-    [Database Mode] Display all direct resource references
+    [Database Mode] Display all direct resource references (optional)
 
 .PARAMETER ShowIndirectReferences
-    [Database Mode] Display all indirect/template-based references
+    [Database Mode] Display all indirect/template-based references (optional)
 
-.PARAMETER ShowSequentialReferences
-    [Database Mode] Display sequential test dependencies
-
-.PARAMETER ShowCrossFileReferences
-    [Database Mode] Display cross-file struct references
-
-.PARAMETER ShowAllReferences
-    [Database Mode] Display all reference types (equivalent to all Show* flags)
+.PARAMETER Help
+    Display comprehensive formatted help message
 
 .EXAMPLE
     # Discovery Mode: Full scan
@@ -53,10 +49,22 @@
     .\terracorder.ps1 -DatabaseDirectory "C:\output" -ShowDirectReferences
 
 .EXAMPLE
-    # Database Mode: Show all reference types
-    .\terracorder.ps1 -DatabaseDirectory "C:\output" -ShowAllReferences
+    # Database Mode: Show indirect references only
+    .\terracorder.ps1 -DatabaseDirectory "C:\output" -ShowIndirectReferences
+
+.EXAMPLE
+    # Show comprehensive help
+    .\terracorder.ps1 -Help
+
+.NOTES
+    Version: 1.0
+    Author: Terraform Test Discovery Tool
+
+.LINK
+    https://github.com/WodansSon/terraform-terracorder
 #>
 
+[CmdletBinding(DefaultParameterSetName = "DiscoveryMode")]
 param(
     # Discovery Mode parameters
     [Parameter(Mandatory = $false, ParameterSetName = "DiscoveryMode")]
@@ -71,7 +79,7 @@ param(
 
     # Shared parameters
     [Parameter(Mandatory = $false)]
-    [string]$ExportDirectory = (Join-Path $PSScriptRoot "..\output"),
+    [string]$ExportDirectory,
 
     # Database Mode query options
     [Parameter(Mandatory = $false, ParameterSetName = "DatabaseMode")]
@@ -80,14 +88,9 @@ param(
     [Parameter(Mandatory = $false, ParameterSetName = "DatabaseMode")]
     [switch]$ShowIndirectReferences,
 
-    [Parameter(Mandatory = $false, ParameterSetName = "DatabaseMode")]
-    [switch]$ShowSequentialReferences,
-
-    [Parameter(Mandatory = $false, ParameterSetName = "DatabaseMode")]
-    [switch]$ShowCrossFileReferences,
-
-    [Parameter(Mandatory = $false, ParameterSetName = "DatabaseMode")]
-    [switch]$ShowAllReferences
+    # Help parameter
+    [Parameter(Mandatory = $false)]
+    [switch]$Help
 )
 
 # Script-level color configuration - SINGLE SOURCE OF TRUTH for all color theming
@@ -178,6 +181,17 @@ Import-Module (Join-Path $ModulesPath "SequentialProcessing.psm1") -Force       
 Import-Module (Join-Path $ModulesPath "DatabaseMode.psm1") -Force                # Database-only mode query functions
 #endregion
 
+# Display help if requested (after UI module is loaded)
+if ($Help) {
+    Show-ComprehensiveHelp
+    exit 0
+}
+
+# Set default ExportDirectory if not provided (must be after param block for PS 5.1 compatibility)
+if (-not $ExportDirectory) {
+    $ExportDirectory = Join-Path $PSScriptRoot "..\output"
+}
+
 #region Mode Detection and Validation
 # Determine operation mode: Discovery Mode or Database Mode
 $IsDiscoveryMode = $false
@@ -196,22 +210,8 @@ if ($DatabaseDirectory) {
         exit 1
     }
 
-    # Validate at least one query option is specified
-    if (-not ($ShowDirectReferences -or $ShowIndirectReferences -or $ShowSequentialReferences -or
-              $ShowCrossFileReferences -or $ShowAllReferences)) {
-        Write-Host ""
-        Write-Host "ERROR: " -ForegroundColor Red -NoNewline
-        Write-Host "Database Mode requires at least one query option." -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "Available options:" -ForegroundColor Cyan
-        Write-Host "  -ShowDirectReferences      : Display direct resource references" -ForegroundColor Gray
-        Write-Host "  -ShowIndirectReferences    : Display indirect/template references" -ForegroundColor Gray
-        Write-Host "  -ShowSequentialReferences  : Display sequential test dependencies" -ForegroundColor Gray
-        Write-Host "  -ShowCrossFileReferences   : Display cross-file struct references" -ForegroundColor Gray
-        Write-Host "  -ShowAllReferences         : Display all reference types" -ForegroundColor Gray
-        Write-Host ""
-        exit 1
-    }
+    # If no query option specified, default to showing statistics only
+    $ShowStatisticsOnly = -not ($ShowDirectReferences -or $ShowIndirectReferences)
 
 } elseif ($ResourceName -and $RepositoryDirectory) {
     # Discovery Mode
@@ -542,8 +542,9 @@ try {
             Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor | Out-Null
 
         # Execute requested query operations
-        if ($ShowAllReferences) {
-            Show-AllReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        if ($ShowStatisticsOnly) {
+            # Default behavior: Show database statistics and available options
+            Show-DatabaseStatistics -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
         } else {
             # Show individual reference types if requested
             if ($ShowDirectReferences) {
@@ -552,14 +553,6 @@ try {
 
             if ($ShowIndirectReferences) {
                 Show-IndirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            }
-
-            if ($ShowSequentialReferences) {
-                Show-SequentialReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            }
-
-            if ($ShowCrossFileReferences) {
-                Show-CrossFileReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
             }
         }
 
