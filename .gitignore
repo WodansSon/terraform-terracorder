@@ -57,6 +57,7 @@ tmp/
 build/
 dist/
 out/
+output*/
 bin/
 obj/
 
