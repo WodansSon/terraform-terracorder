@@ -2049,8 +2049,8 @@ function Import-DatabaseFromCSV {
                 SequentialRefId = $sequentialRefId
                 EntryPointFunctionRefId = $entryPointFunctionRefId
                 ReferencedFunctionRefId = $referencedFunctionRefId
-                SequentialGroup = $row.SequentialGroup
-                SequentialKey = $row.SequentialKey
+                SequentialGroup = [string]$row.SequentialGroup
+                SequentialKey = [string]$row.SequentialKey
             }
             # Update counter
             if ($sequentialRefId -ge $script:SequentialRefIdCounter) {

@@ -450,12 +450,25 @@ function Show-SequentialCallChain {
         }
 
         # Group by sequential group within the entry point
+        # Ensure groupName is a string to prevent hashtable key issues
         $seqGroup = $refInfo.SequentialGroup
-        if (-not $entryPointGroups[$epKey].SequentialGroups.ContainsKey($seqGroup)) {
-            $entryPointGroups[$epKey].SequentialGroups[$seqGroup] = @()
+
+        # Handle case where SequentialGroup might be an object or hashtable
+        if ($seqGroup -is [hashtable] -or $seqGroup -is [System.Collections.IDictionary]) {
+            # If it's a hashtable, try to get a meaningful string representation
+            # This shouldn't happen, but handle it gracefully
+            $seqGroupKey = "Unknown"
+        } elseif ($null -eq $seqGroup -or [string]::IsNullOrWhiteSpace($seqGroup)) {
+            $seqGroupKey = "(empty)"
+        } else {
+            $seqGroupKey = [string]$seqGroup
         }
 
-        $entryPointGroups[$epKey].SequentialGroups[$seqGroup] += $refInfo
+        if (-not $entryPointGroups[$epKey].SequentialGroups.ContainsKey($seqGroupKey)) {
+            $entryPointGroups[$epKey].SequentialGroups[$seqGroupKey] = @()
+        }
+
+        $entryPointGroups[$epKey].SequentialGroups[$seqGroupKey] += $refInfo
     }
 
     # Sort entry points by line number
@@ -478,70 +491,87 @@ function Show-SequentialCallChain {
         Write-HostRGB ": " $colors.Highlight -NoNewline
         Write-HostRGB "$($entryPoint.FunctionName)" $colors.Function
 
+        # Display entry point pipe
         Write-HostRGB "       $pipe" $colors.Highlight
 
-        # Sort sequential groups by key name
-        $sortedSeqGroups = $epGroup.SequentialGroups.GetEnumerator() | Sort-Object Name
-        $totalSeqGroups = $sortedSeqGroups.Count
-        $currentSeqGroupIndex = 0
+        # Display each sequential group
+        # Use GetEnumerator() to avoid conflicts with reserved property names like "keys"
+        $groupNames = @($epGroup.SequentialGroups.GetEnumerator() | ForEach-Object { [string]$_.Key } | Sort-Object)
+        $totalGroups = $groupNames.Count
+        $currentGroupIndex = 0
 
-        foreach ($seqGroupEntry in $sortedSeqGroups) {
-            $currentSeqGroupIndex++
-            $isLastGroup = ($currentSeqGroupIndex -eq $totalSeqGroups)
-            $groupBranch = if ($isLastGroup) { $corner } else { $tee }
+        foreach ($groupName in $groupNames) {
+            $currentGroupIndex++
+            $isLastGroup = ($currentGroupIndex -eq $totalGroups)
 
-            # Group prefix includes proper spacing for alignment
+            # Group level - Keys align with the T-down character position
             $groupPrefix = if ($isLastGroup) { "          " } else { "       $pipe  " }
 
-            # Display sequential group
-            Write-HostRGB "       $groupBranch" $colors.Highlight -NoNewline
-            Write-HostRGB "$arrow$arrow$teeDown$arrow$rarrow " $colors.Highlight -NoNewline
-            Write-HostRGB "Sequential Group: " $colors.Highlight -NoNewline
-            Write-HostRGB "$($seqGroupEntry.Name)" $colors.Variable
+            $rawSteps = $epGroup.SequentialGroups[$groupName]
 
-            # Sort steps by sequential key
-            $sortedSteps = $seqGroupEntry.Value | Sort-Object { $_.SequentialKey }
-            $totalSteps = $sortedSteps.Count
+            # Group by SequentialKey to count unique keys (not total references)
+            $uniqueKeys = $rawSteps | Group-Object -Property SequentialKey
+            $steps = @($uniqueKeys | Sort-Object Name)
 
-            # Only show pipe after Sequential Group if there are multiple keys
-            if ($totalSteps -gt 1) {
-                Write-HostRGB "$groupPrefix$pipe" $colors.Highlight
-            }
+            # Display each step in the group
+            $stepCount = $steps.Count
 
-            $currentStepIndex = 0
+            # Determine group branch based on position - always show T-down since groups have keys as children
+            $groupBranch = if ($isLastGroup) { "$corner$arrow$arrow$teeDown" } else { "$tee$arrow$arrow$teeDown" }
 
-            foreach ($step in $sortedSteps) {
-                $currentStepIndex++
-                $isLastStep = ($currentStepIndex -eq $totalSteps)
-                $stepBranch = if ($isLastStep) { $corner } else { $tee }
-                $stepContinuation = if ($isLastStep) { " " } else { $pipe }
+            Write-HostRGB "       $groupBranch$arrow$rarrow" $colors.Highlight -NoNewline
+            Write-HostRGB " Sequential Group: " $colors.Highlight -NoNewline
+            Write-HostRGB "$groupName" $colors.String
+            Write-HostRGB "$groupPrefix$pipe" $colors.Highlight
 
-                # Display sequential key
-                Write-HostRGB "$groupPrefix$stepBranch" $colors.Highlight -NoNewline
-                Write-HostRGB "$arrow$teeDown$arrow$rarrow " $colors.Highlight -NoNewline
+            $currentStep = 0
+            foreach ($keyGroup in $steps) {
+                $currentStep++
+                $isLastStep = ($currentStep -eq $stepCount)
+
+                # When there's only one key, use corner; otherwise use tee/corner based on position
+                if ($stepCount -eq 1) {
+                    $stepBranch = "$corner$arrow$teeDown$arrow"
+                } else {
+                    $stepBranch = if ($isLastStep) { "$corner$arrow$teeDown$arrow" } else { "$tee$arrow$teeDown$arrow" }
+                }
+
+                # Key level - builds on group prefix
+                $keyPrefix = if ($isLastStep) { "$groupPrefix " } else { "$groupPrefix$pipe" }
+
+                # Get the first step from this key group (they all have the same key)
+                $step = $keyGroup.Group | Select-Object -First 1
+
+                # Key header with T-junction down for children
+                Write-HostRGB "$groupPrefix$stepBranch$rarrow " $colors.Highlight -NoNewline
                 Write-HostRGB "Key     : " $colors.Highlight -NoNewline
-                Write-HostRGB "$($step.SequentialKey)" $colors.String
+                if ([string]::IsNullOrEmpty($step.SequentialKey)) {
+                    Write-Host "(empty)" -ForegroundColor DarkGray
+                } else {
+                    Write-HostRGB "$($step.SequentialKey)" $colors.String
+                }
 
-                # Display referenced function
-                Write-HostRGB "$groupPrefix$stepContinuation $corner$arrow$rarrow " $colors.Highlight -NoNewline
-                Write-HostRGB "Function: " $colors.Highlight -NoNewline
+                # Configuration Function - always on one line with corner
+                Write-HostRGB "$keyPrefix $corner$arrow$rarrow Function: " $colors.Highlight -NoNewline
 
-                # Check if we have line number (internal) or it's external reference
+                # Show line number or External Reference prefix, then function name
                 if ([string]::IsNullOrWhiteSpace($step.TestFunc.Line) -or $step.TestFunc.Line -eq 0) {
                     # External Reference
                     Write-HostRGB "External Reference" $colors.Function -NoNewline
                     Write-HostRGB ": " $colors.Label -NoNewline
 
+                    # Function name
                     if ([string]::IsNullOrEmpty($step.TestFunc.FunctionName)) {
                         Write-Host "(unknown)" -ForegroundColor DarkGray
                     } else {
                         Write-HostRGB "$($step.TestFunc.FunctionName)" $colors.Variable
                     }
                 } else {
-                    # Has line number - internal function
+                    # Has line number - show it as prefix
                     Write-HostRGB "$($step.TestFunc.Line)" $colors.LineNumber -NoNewline
                     Write-HostRGB ": " $colors.Highlight -NoNewline
 
+                    # Function name
                     if ([string]::IsNullOrEmpty($step.TestFunc.FunctionName)) {
                         Write-Host "(unknown)" -ForegroundColor DarkGray
                     } else {
@@ -549,13 +579,12 @@ function Show-SequentialCallChain {
                     }
                 }
 
-                # Show pipe after step if not the last step in group
                 if (-not $isLastStep) {
                     Write-HostRGB "$groupPrefix$pipe" $colors.Highlight
                 }
             }
 
-            # Show pipe between groups (unless it's the last group)
+            # Continuation pipe between groups (unless it's the last group)
             if (-not $isLastGroup) {
                 Write-HostRGB "       $pipe" $colors.Highlight
             }
