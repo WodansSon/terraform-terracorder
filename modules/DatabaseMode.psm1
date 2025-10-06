@@ -657,13 +657,17 @@ function Show-IndirectReferences {
             Write-Host "     - " -ForegroundColor DarkGray -NoNewline
             Write-Host "$($sameServiceRefs.Count) " -ForegroundColor Green -NoNewline
             Write-Host "templates in the same service folder " -ForegroundColor Gray -NoNewline
-            Write-Host "(LOW RISK)" -ForegroundColor Green
+            Write-Host "(" -ForegroundColor Gray -NoNewline
+            Write-Host "LOW RISK" -ForegroundColor Green -NoNewline
+            Write-Host ")" -ForegroundColor Gray
         }
         if ($crossServiceRefs.Count -gt 0) {
             Write-Host "     - " -ForegroundColor DarkGray -NoNewline
-            Write-Host "$($crossServiceRefs.Count) " -ForegroundColor Red -NoNewline
+            Write-Host "$($crossServiceRefs.Count) " -ForegroundColor Magenta -NoNewline
             Write-Host "templates in different service folders " -ForegroundColor Gray -NoNewline
-            Write-Host "(HIGH RISK - requires cross-service coordination)" -ForegroundColor Red
+            Write-Host "(" -ForegroundColor Gray -NoNewline
+            Write-Host "HIGH RISK - CROSS SERVICE REFERENCE" -ForegroundColor Magenta -NoNewline
+            Write-Host ")" -ForegroundColor Gray
         }
         Write-Host ""
     }
@@ -676,7 +680,9 @@ function Show-IndirectReferences {
         Write-Host "     - " -ForegroundColor DarkGray -NoNewline
         Write-Host "$($sequentialRefs.Count) " -ForegroundColor Yellow -NoNewline
         Write-Host "tests run as part of larger test sequences " -ForegroundColor Gray -NoNewline
-        Write-Host "(MEDIUM RISK)" -ForegroundColor Yellow
+        Write-Host "(" -ForegroundColor Gray -NoNewline
+        Write-Host "MEDIUM RISK" -ForegroundColor Yellow -NoNewline
+        Write-Host ")" -ForegroundColor Gray
         Write-Host ""
     }
 
