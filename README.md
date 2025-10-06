@@ -29,6 +29,11 @@ A high-performance **database-driven** Terraform test analysis tool that identif
 - **No File Scanning**: Load from CSV exports instantly without repository access
 - **Default Statistics View**: Run without flags to see available analysis options
 - **Multiple Query Types**: Direct references, indirect references (includes templates and sequential patterns), or all combined
+- **Visual Blast Radius Trees**: Rich Unicode tree diagrams mapping complete dependency chains
+  - Sequential test entry points with nested groups and keys
+  - Template function call chains with multi-level indirection
+  - Color-coded output with automatic VS Code theme detection
+  - Professional box-drawing characters for clear hierarchy visualization
 - **Data Exploration**: Perfect for analysis, reporting, and understanding test relationships
 - **Syntax Highlighting**: Color-coded output with VS Code theme detection for enhanced readability (requires terminal ANSI support)
 - **Cross-Platform**: Works on Windows, Linux, and macOS with PowerShell Core 7.0+
@@ -103,7 +108,7 @@ cd terracorder
 .\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\terraform-provider-azurerm" -ExportDirectory "C:\analysis\subnet"
 ```
 
-### Database Mode - Query Existing Data
+### Database Mode - Query Existing Data with Visual Blast Radius Analysis
 ```powershell
 # View available analysis options (default - no flags required)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output"
@@ -111,7 +116,7 @@ cd terracorder
 # Show direct resource references (fast, no file scanning)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowDirectReferences
 
-# Show indirect references (includes templates and sequential patterns)
+# Show indirect references with visual tree diagrams (includes templates and sequential patterns)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowIndirectReferences
 
 # Show all reference types combined (complete blast radius analysis)
@@ -120,6 +125,13 @@ cd terracorder
 # Use custom database location
 .\scripts\terracorder.ps1 -DatabaseDirectory "C:\analysis\subnet" -ShowAllReferences
 ```
+
+### Visual Blast Radius Trees
+Database Mode includes **rich visual tree diagrams** that map complete dependency chains:
+- **Unicode box-drawing**: Professional tree structure with proper connectors (│, ├, └, ┬, ►, ─)
+- **Color-coded output**: Automatic VS Code theme detection for enhanced readability
+- **Sequential test visualization**: Shows entry points, groups, keys, and referenced functions
+- **Template dependency mapping**: Displays indirect configuration chains across files
 
 ### Database Exports
 ```powershell
@@ -249,8 +261,12 @@ Database Mode loads previously exported CSV files for instant analysis:
 #### Query Operations (All Optional)
 - **No flags (default)**: Display available analysis options with examples
 - **ShowDirectReferences**: Display all direct resource usage and attribute references
-- **ShowIndirectReferences**: Display template dependencies and sequential test chains
-- **ShowAllReferences**: Display complete blast radius analysis (Direct + Indirect)
+- **ShowIndirectReferences**: Display template dependencies and sequential test chains with **visual tree diagrams**
+  - Sequential test entry points organized by groups and keys
+  - Template function call chains showing multi-level dependencies
+  - Color-coded tree structure with professional Unicode box-drawing
+  - External reference markers for cross-resource dependencies
+- **ShowAllReferences**: Display complete blast radius analysis (Direct + Indirect) with full visual output
 
 #### Benefits
 - **Speed**: Query operations complete in seconds vs minutes for Discovery Mode
@@ -339,6 +355,109 @@ Phase 8: Completed in 61 ms
 
 Total Execution Time: 3705 ms (3.7 seconds)
 ```
+
+### Visual Blast Radius Analysis (Database Mode)
+
+Database Mode provides **rich visual tree diagrams** for dependency analysis:
+
+#### Sequential Test Chain Visualization
+```
+============================================================
+  Sequential Call Chain:
+============================================================
+ Entry Point: 650: TestAccKeyVaultManagedHardwareSecurityModule
+  │
+  ├──┬─► Sequential Group: dataSource
+  │  │
+  │  └─┬─► Key     : basic
+  │    └─► Function: External Reference: testAccDataSourceKeyVaultManagedHardwareSecurityModule_basic
+  │
+  ├──┬─► Sequential Group: keys
+  │  │
+  │  ├─┬─► Key     : basic
+  │  │ └─► Function: External Reference: testAccKeyVaultMHSMKey_basic
+  │  │
+  │  ├─┬─► Key     : complete
+  │  │ └─► Function: External Reference: testAccKeyVaultMHSMKey_complete
+  │  │
+  │  ├─┬─► Key     : data_source
+  │  │ └─► Function: External Reference: testAccKeyVaultMHSMKeyDataSource_basic
+  │  │
+  │  ├─┬─► Key     : purge
+  │  │ └─► Function: External Reference: testAccKeyVaultHSMKey_purge
+  │  │
+  │  ├─┬─► Key     : rotationPolicy
+  │  │ └─► Function: External Reference: testAccMHSMKeyRotationPolicy_all
+  │  │
+  │  └─┬─► Key     : softDeleteRecovery
+  │    └─► Function: External Reference: testAccKeyVaultHSMKey_softDeleteRecovery
+  │
+  ├──┬─► Sequential Group: resource
+  │  │
+  │  ├─┬─► Key     : basic
+  │  │ └─► Function: 2276: testAccKeyVaultManagedHardwareSecurityModule_basic
+  │  │
+  │  ├─┬─► Key     : complete
+  │  │ └─► Function: 4453: testAccKeyVaultManagedHardwareSecurityModule_complete
+  │  │
+  │  ├─┬─► Key     : download
+  │  │ └─► Function: 2739: testAccKeyVaultManagedHardwareSecurityModule_download
+  │  │
+  │  └─┬─► Key     : update
+  │    └─► Function: 3751: testAccKeyVaultManagedHardwareSecurityModule_updateAndRequiresImport
+  │
+  ├──┬─► Sequential Group: roleAssignments
+  │  │
+  │  ├─┬─► Key     : builtInRole
+  │  │ └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleAssignment_builtInRole
+  │  │
+  │  └─┬─► Key     : customRole
+  │    └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleAssignment_customRole
+  │
+  ├──┬─► Sequential Group: roleDefinitionDataSource
+  │  │
+  │  └─┬─► Key     : basic
+  │    └─► Function: External Reference: testAccDataSourceKeyVaultManagedHardwareSecurityModuleRoleDefinition_basic
+  │
+  └──┬─► Sequential Group: roleDefinitions
+     │
+     └─┬─► Key     : basic
+       └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleDefinition_basic
+```
+
+#### Template Function Dependency Chain
+```
+============================================================
+  Template Function Call Chain:
+============================================================
+ Entry Point: 664: TestAccSiteRecoveryFabric_basic
+  │
+  └──► Template: 1405: (r SiteRecoveryFabricResource).basic
+       │
+       └──► Template: 1413: (r SiteRecoveryFabricResource).template
+            │
+            └──► Function: 1499: testAccSiteRecoveryFabric_basicConfig
+```
+
+#### Tree Symbols Explained
+- `│` Vertical pipe: Continues the tree structure downward
+- `├` Tee connector: Branches to a sibling (more items follow)
+- `└` Corner connector: Last item in a group (no more siblings)
+- `┬` Tee-down connector: Parent with children below
+- `►` Right arrow: Points to the referenced item
+- `─` Horizontal line: Connects items at the same level
+
+#### Color Coding (Terminal ANSI Support Required)
+- **Entry Points**: Highlighted function names
+- **Sequential Groups**: Colored group names (e.g., "dataSource", "keys", "resource")
+- **Line Numbers**: Distinct color for quick reference
+- **External References**: Marked to show cross-resource dependencies
+- **Theme Detection**: Automatically adapts to VS Code light/dark themes
+
+**Note**: Visual tree diagrams require terminal ANSI color support. Works best in:
+- Windows Terminal
+- VS Code integrated terminal
+- PowerShell Core 7.0+ on Linux/macOS
 
 ### CSV Export Files (in output directory)
 ```
@@ -474,6 +593,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Operating System**: Windows, Linux, or macOS
 - **Memory**: Recommended 4GB+ for large repositories
 - **Terraform AzureRM Provider**: Source code for analysis
+- **Terminal**: ANSI color support recommended for visual tree diagrams (Windows Terminal, VS Code integrated terminal, or modern Linux/macOS terminal)
 
 ## Use Cases
 
