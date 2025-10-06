@@ -3,6 +3,12 @@
 # These functions provide deep analysis without re-running discovery phases
 
 # ============================================================================
+# MODULE-LEVEL VARIABLES
+# ============================================================================
+# Cache of imported resources for filtering support
+$script:ImportedResources = @()
+
+# ============================================================================
 # PERFORMANCE OPTIMIZATION: Precompiled Regex Patterns
 # ============================================================================
 # These regex patterns are compiled once at module load time and reused across
@@ -36,7 +42,10 @@ $script:CompiledRegex = @{
 function Show-DatabaseStatistics {
     <#
     .SYNOPSIS
-    Display available analysis options for the database
+    Display available analysis options and resources in the database
+
+    .PARAMETER Resources
+    Array of resource records from Resources.csv
 
     .PARAMETER NumberColor
     Color for numbers in output
@@ -51,6 +60,9 @@ function Show-DatabaseStatistics {
     Color for info prefix in output
     #>
     param(
+        [Parameter(Mandatory = $false)]
+        [array]$Resources = @(),
+
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Yellow",
 
@@ -70,6 +82,19 @@ function Show-DatabaseStatistics {
     Write-Separator
     Write-Host ""
 
+    # Show resources in database
+    if ($Resources.Count -gt 0) {
+        Write-Host "  Resources in Database:" -ForegroundColor $InfoColor
+        Write-Host ""
+        foreach ($resource in $Resources) {
+            Write-Host "    [" -ForegroundColor $BaseColor -NoNewline
+            Write-Host $resource.ResourceRefId -ForegroundColor $NumberColor -NoNewline
+            Write-Host "] " -ForegroundColor $BaseColor -NoNewline
+            Write-Host $resource.ResourceName -ForegroundColor Green
+        }
+        Write-Host ""
+    }
+
     Write-Host "  Query Options:" -ForegroundColor $InfoColor
     Write-Host ""
     Write-Host "    -ShowDirectReferences      " -ForegroundColor Green -NoNewline
@@ -77,15 +102,33 @@ function Show-DatabaseStatistics {
     Write-Host "    -ShowIndirectReferences    " -ForegroundColor Green -NoNewline
     Write-Host ": View template dependencies and sequential test chains" -ForegroundColor $BaseColor
     Write-Host ""
+
+    if ($Resources.Count -gt 1) {
+        Write-Host "  Filter by Resource:" -ForegroundColor $InfoColor
+        Write-Host ""
+        Write-Host "    -ResourceName <name>       " -ForegroundColor Green -NoNewline
+        Write-Host ": Filter results to specific resource" -ForegroundColor $BaseColor
+        Write-Host ""
+    }
+
     Write-Host "  Examples:" -ForegroundColor $InfoColor
     Write-Host "    .\terracorder.ps1 -DatabaseDirectory .\output -ShowDirectReferences" -ForegroundColor $BaseColor
     Write-Host "    .\terracorder.ps1 -DatabaseDirectory .\output -ShowIndirectReferences" -ForegroundColor $BaseColor
+
+    if ($Resources.Count -gt 1) {
+        Write-Host "    .\terracorder.ps1 -DatabaseDirectory .\output -ShowDirectReferences -ResourceName """ -ForegroundColor $BaseColor -NoNewline
+        Write-Host $Resources[0].ResourceName -ForegroundColor Green -NoNewline
+        Write-Host """" -ForegroundColor $BaseColor
+    }
 }
 
 function Show-DirectReferences {
     <#
     .SYNOPSIS
     Display all direct resource references from the database
+
+    .PARAMETER ResourceName
+    Optional filter to show only references for specific resource
 
     .PARAMETER NumberColor
     Color for numbers in output
@@ -100,6 +143,9 @@ function Show-DirectReferences {
     Color for info prefix in output
     #>
     param(
+        [Parameter(Mandatory = $false)]
+        [string]$ResourceName = "",
+
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Yellow",
 
@@ -119,7 +165,31 @@ function Show-DirectReferences {
     Write-Separator
     Write-Host ""
 
-    $directRefs = Get-DirectResourceReferences
+    # Get resource filter if specified
+    $resourceRefId = $null
+    if ($ResourceName) {
+        $resource = $script:ImportedResources | Where-Object { $_.ResourceName -eq $ResourceName } | Select-Object -First 1
+        if (-not $resource) {
+            Write-Host "  [" -ForegroundColor $BaseColor -NoNewline
+            Write-Host "ERROR" -ForegroundColor Red -NoNewline
+            Write-Host "] Resource '" -ForegroundColor $BaseColor -NoNewline
+            Write-Host $ResourceName -ForegroundColor Yellow -NoNewline
+            Write-Host "' not found in database" -ForegroundColor $BaseColor
+            Write-Host ""
+            Write-Host "  Available resources:" -ForegroundColor $InfoColor
+            foreach ($res in $script:ImportedResources) {
+                Write-Host "    - " -ForegroundColor $BaseColor -NoNewline
+                Write-Host $res.ResourceName -ForegroundColor Green
+            }
+            return
+        }
+        $resourceRefId = $resource.ResourceRefId
+        Write-Host "  Filtering by Resource: " -ForegroundColor $InfoColor -NoNewline
+        Write-Host $ResourceName -ForegroundColor Green
+        Write-Host ""
+    }
+
+    $directRefs = Get-DirectResourceReferences -ResourceRefId $resourceRefId
 
     if ($directRefs.Count -eq 0) {
         Show-PhaseMessageHighlight -Message "No Direct Resource References Found In Database" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $BaseColor -InfoColor $InfoColor
@@ -597,6 +667,9 @@ function Show-IndirectReferences {
     .SYNOPSIS
     Display all indirect/template-based references from the database
 
+    .PARAMETER ResourceName
+    Optional filter to show only references for specific resource
+
     .PARAMETER NumberColor
     Color for numbers in output
 
@@ -610,6 +683,9 @@ function Show-IndirectReferences {
     Color for info prefix in output
     #>
     param(
+        [Parameter(Mandatory = $false)]
+        [string]$ResourceName = "",
+
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Yellow",
 
@@ -629,9 +705,33 @@ function Show-IndirectReferences {
     Write-Separator
     Write-Host ""
 
-    $indirectRefs = Get-IndirectConfigReferences
-    $templateRefs = Get-TemplateReferences
-    $sequentialRefs = Get-SequentialReferences
+    # Get resource filter if specified
+    $resourceRefId = $null
+    if ($ResourceName) {
+        $resource = $script:ImportedResources | Where-Object { $_.ResourceName -eq $ResourceName } | Select-Object -First 1
+        if (-not $resource) {
+            Write-Host "  [" -ForegroundColor $BaseColor -NoNewline
+            Write-Host "ERROR" -ForegroundColor Red -NoNewline
+            Write-Host "] Resource '" -ForegroundColor $BaseColor -NoNewline
+            Write-Host $ResourceName -ForegroundColor Yellow -NoNewline
+            Write-Host "' not found in database" -ForegroundColor $BaseColor
+            Write-Host ""
+            Write-Host "  Available resources:" -ForegroundColor $InfoColor
+            foreach ($res in $script:ImportedResources) {
+                Write-Host "    - " -ForegroundColor $BaseColor -NoNewline
+                Write-Host $res.ResourceName -ForegroundColor Green
+            }
+            return
+        }
+        $resourceRefId = $resource.ResourceRefId
+        Write-Host "  Filtering by Resource: " -ForegroundColor $InfoColor -NoNewline
+        Write-Host $ResourceName -ForegroundColor Green
+        Write-Host ""
+    }
+
+    $indirectRefs = Get-IndirectConfigReferences -ResourceRefId $resourceRefId
+    $templateRefs = Get-TemplateReferences -ResourceRefId $resourceRefId
+    $sequentialRefs = Get-SequentialReferences -ResourceRefId $resourceRefId
 
     if ($indirectRefs.Count -eq 0 -and $templateRefs.Count -eq 0 -and $sequentialRefs.Count -eq 0) {
         Show-PhaseMessageHighlight -Message "No Indirect References Found In Database" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $BaseColor -InfoColor $InfoColor
@@ -823,6 +923,22 @@ function Show-IndirectReferences {
         # File header
         Write-Host " File: " -ForegroundColor $InfoColor -NoNewline
         Write-Host "./$filePath" -ForegroundColor $BaseColor
+
+        # Get the resource name from the first reference's TestFunction
+        $resourceName = "unknown"
+        $firstRef = $refs | Select-Object -First 1
+        if ($firstRef -and $firstRef.TestFunc) {
+            $testFunc = $firstRef.TestFunc
+            if ($testFunc.ResourceRefId) {
+                $resource = Get-ResourceById -ResourceRefId $testFunc.ResourceRefId
+                if ($resource) {
+                    $resourceName = $resource.ResourceName
+                }
+            }
+        }
+        Write-Host "   Referenced Resource: " -ForegroundColor $InfoColor -NoNewline
+        Write-Host "$resourceName" -ForegroundColor $NumberColor
+
         if ($templateRefs.Count -gt 0) {
             $templateLabel = if ($templateRefs.Count -eq 1) { "Test Step Configuration Function Reference" } else { "Test Step Configuration Function References" }
             Write-Host "   $($templateRefs.Count) " -ForegroundColor $NumberColor -NoNewline
@@ -1059,8 +1175,29 @@ function Show-CrossFileReferences {
     }
 }
 
+function Set-ImportedResourcesCache {
+    <#
+    .SYNOPSIS
+    Set the imported resources cache for filtering
+
+    .PARAMETER Resources
+    Array of resource records from Import-DatabaseFromCSV
+
+    .DESCRIPTION
+    Internal function to set the module-level cache of imported resources
+    for use in filtering queries by resource
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$Resources
+    )
+
+    $script:ImportedResources = $Resources
+}
+
 Export-ModuleMember -Function @(
     'Show-DatabaseStatistics',
     'Show-DirectReferences',
-    'Show-IndirectReferences'
+    'Show-IndirectReferences',
+    'Set-ImportedResourcesCache'
 )

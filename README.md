@@ -15,6 +15,7 @@ A high-performance **database-driven** Terraform test analysis tool that identif
 ## Features
 
 ### Discovery Mode (Initial Analysis)
+- **Multi-Resource Support**: Analyze single resources, multiple resources in one run, or auto-discover resources from GitHub Pull Requests
 - **Relational Database Architecture**: Full normalized database with foreign key relationships tracking all test dependencies
 - **Multi-Threaded Processing**: Parallel file processing with up to 8 threads for maximum performance
 - **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns
@@ -23,6 +24,7 @@ A high-performance **database-driven** Terraform test analysis tool that identif
 - **Smart Test Command Generation**: Automatically generates optimized `go test` commands by service
 - **Sequential Test Support**: Detects and tracks `acceptance.RunTestsInSequence` patterns
 - **Template Function Analysis**: Maps complete template dependency chains across files
+- **GitHub Integration**: Automatically discover affected resources from Pull Requests (requires GitHub CLI or git)
 
 ### Database Mode (Query Existing Data)
 - **Fast Query Operations**: Analyze previously discovered data in seconds, not minutes
@@ -47,8 +49,14 @@ TerraCorder requires the modules directory to function properly. The easiest way
 git clone https://github.com/WodansSon/terraform-terracorder.git
 cd terraform-terracorder
 
-# Run Discovery Mode (initial analysis)
+# Run Discovery Mode (initial analysis - single resource)
 .\scripts\terracorder.ps1 -ResourceName "azurerm_virtual_network" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+# Run Discovery Mode (multiple resources)
+.\scripts\terracorder.ps1 -ResourceNames @("azurerm_subnet","azurerm_virtual_network") -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+# Run Discovery Mode (auto-discover from Pull Request)
+.\scripts\terracorder.ps1 -PullRequest "1234" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
 
 # Run Database Mode (query existing data)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowDirectReferences
@@ -101,8 +109,14 @@ cd terracorder
 
 ### Discovery Mode - Initial Resource Analysis
 ```powershell
-# Analyze all tests that use azurerm_subnet (creates CSV database)
+# Analyze a single resource (creates CSV database)
 .\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+# Analyze multiple resources in one run (creates combined database)
+.\scripts\terracorder.ps1 -ResourceNames @("azurerm_subnet","azurerm_virtual_network") -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+# Analyze resources from a Pull Request (auto-discovers affected resources)
+.\scripts\terracorder.ps1 -PullRequest "1234" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
 
 # Use custom export directory for database
 .\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\terraform-provider-azurerm" -ExportDirectory "C:\analysis\subnet"
@@ -110,7 +124,7 @@ cd terracorder
 
 ### Database Mode - Query Existing Data with Visual Blast Radius Analysis
 ```powershell
-# View available analysis options (default - no flags required)
+# View available analysis options and resources in database (default - no flags required)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output"
 
 # Show direct resource references (fast, no file scanning)
@@ -294,7 +308,7 @@ TerraCorder uses a **normalized relational database** with 12 tables:
 | `SequentialReferences` | Sequential links | SequentialRefId (PK), EntryPointFunctionRefId (FK), ReferencedFunctionRefId (FK) |
 | `ReferenceTypes` | Reference lookup | ReferenceTypeId (PK), ReferenceTypeName |
 
-**Note**: The `Resources` table is the master table containing the Azure resource being analyzed (e.g., "azurerm_virtual_network"). Four tables (Services, Structs, TestFunctions, TemplateFunctions) contain `ResourceRefId` foreign keys linking them to the resource under analysis.
+**Note**: The `Resources` table is the master table containing the Azure resources being analyzed (e.g., "azurerm_virtual_network", "azurerm_subnet"). Four tables (Services, Structs, TestFunctions, TemplateFunctions) contain `ResourceRefId` foreign keys linking them to their respective resource. When multiple resources are analyzed in one run (using `-ResourceNames` or `-PullRequest`), each resource gets a unique `ResourceRefId` allowing all data to coexist in a single database.
 
 ## Sample Output
 

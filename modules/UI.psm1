@@ -118,7 +118,13 @@ function Show-InitialBanner {
         Switch to indicate Discovery Mode. If not specified, Database Mode is assumed.
 
     .PARAMETER ResourceName
-        [Discovery Mode] The Azure resource name being searched for
+        [Discovery Mode] Single Azure resource name being searched for
+
+    .PARAMETER ResourceNames
+        [Discovery Mode] Array of Azure resource names being searched for
+
+    .PARAMETER PullRequest
+        [Discovery Mode] Pull Request number being analyzed
 
     .PARAMETER RepositoryDirectory
         [Discovery Mode] Path to terraform-provider-azurerm repository root
@@ -135,6 +141,12 @@ function Show-InitialBanner {
 
         [Parameter(Mandatory = $false)]
         [string]$ResourceName = "",
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$ResourceNames = @(),
+
+        [Parameter(Mandatory = $false)]
+        [string]$PullRequest = "",
 
         [Parameter(Mandatory = $false)]
         [string]$RepositoryDirectory = "",
@@ -183,8 +195,32 @@ function Show-InitialBanner {
     Write-Host ""
 
     if ($DiscoveryMode) {
-        Write-Host " Resource Name       : " -ForegroundColor Cyan -NoNewline
-        Write-Host "$ResourceName" -ForegroundColor Yellow
+        if ($PullRequest) {
+            Write-Host " Pull Request        : " -ForegroundColor Cyan -NoNewline
+            Write-Host "#$PullRequest" -ForegroundColor Magenta
+        }
+
+        if ($ResourceName) {
+            Write-Host " Resource Name       : " -ForegroundColor Cyan -NoNewline
+            Write-Host "$ResourceName" -ForegroundColor Yellow
+        } elseif ($ResourceNames.Count -gt 0) {
+            Write-Host " Resources (Count)   : " -ForegroundColor Cyan -NoNewline
+            Write-Host "$($ResourceNames.Count)" -ForegroundColor Yellow
+            if ($ResourceNames.Count -le 5) {
+                foreach ($res in $ResourceNames) {
+                    Write-Host "   • " -ForegroundColor Gray -NoNewline
+                    Write-Host "$res" -ForegroundColor Yellow
+                }
+            } else {
+                for ($i = 0; $i -lt 3; $i++) {
+                    Write-Host "   • " -ForegroundColor Gray -NoNewline
+                    Write-Host "$($ResourceNames[$i])" -ForegroundColor Yellow
+                }
+                Write-Host "   • " -ForegroundColor Gray -NoNewline
+                Write-Host "... and $($ResourceNames.Count - 3) more" -ForegroundColor Yellow
+            }
+        }
+
         Write-Host " Repository Directory: " -ForegroundColor Cyan -NoNewline
         Write-Host "$RepositoryDirectory" -ForegroundColor Green
         Write-Host " Export Directory    : " -ForegroundColor Cyan -NoNewline
@@ -777,20 +813,22 @@ function Show-ErrorMessage {
     Display error message for mutually exclusive mode parameters
 #>
 function Show-MutuallyExclusiveModesError {
-    Show-ErrorMessage -ErrorTitle "ERROR:" -ErrorMessage "Cannot use -DatabaseDirectory with -ResourceName or -RepositoryDirectory"
+    Show-ErrorMessage -ErrorTitle "ERROR:" -ErrorMessage "Cannot use -DatabaseDirectory with -RepositoryDirectory"
     Write-Host "TerraCorder operates in two mutually exclusive modes:" -ForegroundColor Cyan
     Write-Host "  1. " -ForegroundColor Cyan -NoNewline
     Write-Host "DISCOVERY MODE" -ForegroundColor Yellow -NoNewline
-    Write-Host " - Scan repository files (requires -ResourceName and -RepositoryDirectory)" -ForegroundColor Cyan
+    Write-Host " - Scan repository files (requires -ResourceName/ResourceNames/PullRequest and -RepositoryDirectory)" -ForegroundColor Cyan
     Write-Host "  2. " -ForegroundColor Cyan -NoNewline
     Write-Host "DATABASE MODE" -ForegroundColor Yellow -NoNewline
-    Write-Host " - Query existing database (requires -DatabaseDirectory)" -ForegroundColor Cyan
+    Write-Host " - Query existing database (requires -DatabaseDirectory, optional -ResourceName for filtering)" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Cyan
     Write-Host "  Discovery: " -ForegroundColor Cyan -NoNewline
     Write-Host ".\terracorder.ps1 -ResourceName 'azurerm_subnet' -RepositoryDirectory 'C:\repo'" -ForegroundColor White
     Write-Host "  Database:  " -ForegroundColor Cyan -NoNewline
-    Write-Host ".\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowAllReferences" -ForegroundColor White
+    Write-Host ".\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowDirectReferences" -ForegroundColor White
+    Write-Host "  Filtered:  " -ForegroundColor Cyan -NoNewline
+    Write-Host ".\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowDirectReferences -ResourceName 'azurerm_subnet'" -ForegroundColor White
     Write-Host ""
 }
 
@@ -871,7 +909,7 @@ function Show-ComprehensiveHelp {
     Write-Host ""
 
     Write-Host "SYNOPSIS:" -ForegroundColor Yellow
-    Write-Host "  Find tests to run when modifying a specific Azure resource"
+    Write-Host "  Find tests to run when modifying Azure resources"
     Write-Host ""
 
     Write-Host "USAGE:" -ForegroundColor Yellow
@@ -880,10 +918,23 @@ function Show-ComprehensiveHelp {
     Write-Host "  1. " -NoNewline
     Write-Host "DISCOVERY MODE" -ForegroundColor Cyan -NoNewline
     Write-Host " (Full Repository Scan):"
+    Write-Host "     # Single resource"
     Write-Host "     .\terracorder.ps1 -ResourceName " -NoNewline
     Write-Host '"azurerm_subnet"' -ForegroundColor Green -NoNewline
     Write-Host " -RepositoryDirectory " -NoNewline
     Write-Host '"C:\path\to\terraform-provider-azurerm"' -ForegroundColor Green
+    Write-Host ""
+    Write-Host "     # Multiple resources"
+    Write-Host "     .\terracorder.ps1 -ResourceNames " -NoNewline
+    Write-Host '@("azurerm_subnet","azurerm_virtual_network")' -ForegroundColor Green -NoNewline
+    Write-Host " -RepositoryDirectory " -NoNewline
+    Write-Host '"C:\path"' -ForegroundColor Green
+    Write-Host ""
+    Write-Host "     # Analyze Pull Request"
+    Write-Host "     .\terracorder.ps1 -PullRequest " -NoNewline
+    Write-Host '1234' -ForegroundColor Green -NoNewline
+    Write-Host " -RepositoryDirectory " -NoNewline
+    Write-Host '"C:\path"' -ForegroundColor Green
     Write-Host ""
     Write-Host "  2. " -NoNewline
     Write-Host "DATABASE MODE" -ForegroundColor Cyan -NoNewline
@@ -905,7 +956,9 @@ function Show-ComprehensiveHelp {
     Write-Host "PARAMETERS:" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  Discovery Mode:" -ForegroundColor Cyan
-    Write-Host "    -ResourceName           Azure resource name (e.g., azurerm_subnet)"
+    Write-Host "    -ResourceName           Single Azure resource name (e.g., azurerm_subnet)"
+    Write-Host "    -ResourceNames          Array of resource names (e.g., @('azurerm_subnet','azurerm_vnet'))"
+    Write-Host "    -PullRequest            PR number or URL to auto-detect affected resources"
     Write-Host "    -RepositoryDirectory    Path to terraform-provider-azurerm repository root"
     Write-Host "    -ExportDirectory        CSV export directory (default: ../output)"
     Write-Host ""
@@ -936,9 +989,21 @@ function Show-ComprehensiveHelp {
     Write-Host ""
 
     Write-Host "EXAMPLES:" -ForegroundColor Yellow
-    Write-Host "  # Full discovery scan"
+    Write-Host "  # Discovery - Single resource"
     Write-Host "  .\terracorder.ps1 -ResourceName " -NoNewline
     Write-Host '"azurerm_subnet"' -ForegroundColor Green -NoNewline
+    Write-Host " -RepositoryDirectory " -NoNewline
+    Write-Host '"C:\repos\terraform-provider-azurerm"' -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  # Discovery - Multiple resources"
+    Write-Host "  .\terracorder.ps1 -ResourceNames " -NoNewline
+    Write-Host '@("azurerm_subnet","azurerm_virtual_network")' -ForegroundColor Green -NoNewline
+    Write-Host " -RepositoryDirectory " -NoNewline
+    Write-Host '"C:\repos\terraform-provider-azurerm"' -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  # Discovery - Pull Request analysis"
+    Write-Host "  .\terracorder.ps1 -PullRequest " -NoNewline
+    Write-Host '1234' -ForegroundColor Green -NoNewline
     Write-Host " -RepositoryDirectory " -NoNewline
     Write-Host '"C:\repos\terraform-provider-azurerm"' -ForegroundColor Green
     Write-Host ""
