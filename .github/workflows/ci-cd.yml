@@ -18,26 +18,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        powershell-version: [5.1, 7.x]
-        exclude:
-          - os: ubuntu-latest
-            powershell-version: 5.1
-          - os: macos-latest
-            powershell-version: 5.1
+        powershell-version: [7.x]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup PowerShell (Windows PowerShell 5.1)
-      if: matrix.powershell-version == '5.1'
-      shell: pwsh
-      run: |
-        Write-Host "Using Windows PowerShell 5.1"
-        $PSVersionTable
-
     - name: Setup PowerShell Core
-      if: matrix.powershell-version == '7.x'
       uses: azure/powershell@v1
       with:
         azPSVersion: 'latest'
@@ -117,7 +104,7 @@ jobs:
 
     - name: Upload Test Results
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ matrix.os }}-ps${{ matrix.powershell-version }}
         path: test-results-*.json
@@ -136,7 +123,7 @@ jobs:
 
     - name: Upload DevSkim Results
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: devskim-results
         path: devskim-results.sarif
@@ -187,9 +174,9 @@ jobs:
         ```
 
         ### Platform Support
-        - Windows (PowerShell 5.1+)
-        - Linux (PowerShell Core 7.x)
-        - macOS (PowerShell Core 7.x)
+        - Windows (PowerShell Core 7.x+)
+        - Linux (PowerShell Core 7.x+)
+        - macOS (PowerShell Core 7.x+)
 
         ### Usage
         ```powershell
