@@ -1,5 +1,25 @@
-# TerraCorder Normalized Database Schema
-## Proper Relational Design with Foreign Keys
+# TerraCorder Database Schema
+
+This document describes the relational database structure used by TerraCorder to track Terraform test dependencies.
+
+## Overview
+
+TerraCorder uses a **12-table normalized relational database** with comprehensive foreign key relationships. The database tracks all aspects of test dependencies including:
+- Direct resource usage
+- Template function call chains
+- Sequential test patterns
+- Test configuration references
+
+All data is stored in-memory during processing and exported to CSV files for persistence and analysis.
+
+## Multi-Resource Support
+
+TerraCorder supports analyzing **multiple resources in a single database**:
+- **Single Resource Mode**: `-ResourceName "azurerm_subnet"` creates database with ResourceRefId = 1
+- **Multi-Resource Mode**: `-ResourceNames @("azurerm_subnet","azurerm_virtual_network")` creates database with ResourceRefId = 1, 2, etc.
+- **Pull Request Mode**: `-PullRequest "1234"` auto-discovers resources from PR and assigns sequential ResourceRefIds
+
+When multiple resources are analyzed, the `Resources` table contains all resources, and the `Services`, `Structs`, `TestFunctions`, and `TemplateFunctions` tables use `ResourceRefId` foreign keys to link records to their respective resources. This allows querying, filtering, and analysis by specific resource while maintaining relational integrity.
 
 ## Operational Modes
 
@@ -101,9 +121,12 @@ CREATE TABLE Resources (
 );
 ```
 
-**Purpose**: Master table containing the Azure resource being analyzed (e.g., "azurerm_resource_group", "azurerm_virtual_network").
+**Purpose**: Master table containing all analyzed Azure resources (e.g., "azurerm_resource_group", "azurerm_virtual_network").
 
-**Rationale**: This table serves as the single source of truth for the resource under analysis. In the current implementation, TerraCorder analyzes one resource at a time, so this table always contains exactly one record with `ResourceRefId = 1`. This design enables future multi-resource analysis while maintaining referential integrity.
+**Rationale**: This table serves as the master record for all resources in the database. TerraCorder supports both single-resource and multi-resource analysis:
+- **Single Resource Mode**: One record with ResourceRefId = 1
+- **Multi-Resource Mode**: Multiple records with sequential ResourceRefIds (1, 2, 3, ...)
+- **Pull Request Mode**: Auto-discovered resources assigned sequential ResourceRefIds
 
 **Foreign Key Usage**: The `ResourceRefId` field is referenced by multiple tables to establish the relationship between database entities and the resource being analyzed:
 
@@ -114,7 +137,12 @@ CREATE TABLE Resources (
 | **TestFunctions** | Test functions | Associates test functions with the resource under test |
 | **TemplateFunctions** | Template/config methods | Links configuration templates to the resource |
 
-**Design Note**: While the current implementation creates ResourceRefId during CSV export (cold path), this adds the foreign key relationship to exported data. All tables referencing Resources use `ResourceRefId = 1` since TerraCorder currently analyzes a single resource per execution. Future enhancement could support multi-resource analysis by populating multiple Resources records.
+**Multi-Resource Benefits**:
+- Analyze multiple resources in a single database run
+- Query and filter by specific resource using ResourceRefId
+- Maintain relational integrity across resources
+- Generate combined test commands for all resources
+- Export single database containing all analyzed resources
 
 ### 2. Services Table (Azure Service Directory)
 ```sql
@@ -1045,10 +1073,44 @@ WHERE tfs.ReferenceTypeId != 8;
 - **Template function classification** via ReferenceTypeId = 7 in IndirectConfigReferences
 - **Cross-file struct resolution** using proper JOIN operations instead of content parsing
 
+---
+
+## Database Workflows
+
+### Single Resource Discovery
+1. Initialize database with ResourceRefId = 1
+2. Create resource record in Resources table
+3. Discover and populate all dependent tables with ResourceRefId = 1
+4. Export to CSV files
+
+### Multi-Resource Discovery
+1. Initialize database with first resource (ResourceRefId = 1)
+2. For each additional resource:
+   - Call `Add-ResourceToDatabase` to increment ResourceRefId
+   - Add resource record to Resources table
+   - Populate dependent tables with current ResourceRefId
+3. Phases 1-6 run for each resource with accumulated data
+4. Phase 7 generates combined test commands from all resources
+5. Phase 8 exports single database containing all resources
+
+### Pull Request Discovery
+1. Fetch PR diff using GitHub CLI or git
+2. Parse diff to find modified `*_resource.go` files
+3. Extract resource names (e.g., "azurerm_subnet")
+4. Follow multi-resource workflow with discovered resources
+
+### Database Mode Queries
+1. Import CSV files into memory
+2. Load all resources from Resources table
+3. Execute queries (optionally filtered by ResourceName)
+4. Display results with visual trees and statistics
+
+---
+
 ## CSV Export Format
 
 ### Discovery Mode Exports (Phase 8)
-TerraCorder exports 11 CSV files representing the complete relational database:
+TerraCorder exports 12 CSV files representing the complete relational database:
 
 | File | Table | Primary Key | Row Count Example | Contains ResourceRefId FK |
 |------|-------|-------------|-------------------|---------------------------|
@@ -1065,7 +1127,17 @@ TerraCorder exports 11 CSV files representing the complete relational database:
 | `SequentialReferences.csv` | SequentialReferences | SequentialRefId | 273 links | No (links to TestFunctions) |
 | `ReferenceTypes.csv` | ReferenceTypes | ReferenceTypeId | 13 types | N/A (Lookup table) |
 
-**Note on ResourceRefId Foreign Key**: Four tables (Services, Structs, TestFunctions, TemplateFunctions) contain `ResourceRefId = 1` foreign key references. This field is added during CSV export (Phase 8) to establish the relationship between these entities and the Azure resource being analyzed. Currently, all records reference `ResourceRefId = 1` since TerraCorder analyzes one resource per execution.
+**Multi-Resource CSV Notes**:
+- CSV files from multi-resource runs contain data for ALL resources
+- Filter by ResourceRefId to isolate data for specific resource
+- Join with Resources table to get resource names
+- All foreign key relationships maintained across resources
+- Database Mode queries can filter by ResourceName parameter
+
+**Note on ResourceRefId Foreign Key**: Four tables (Services, Structs, TestFunctions, TemplateFunctions) contain `ResourceRefId` foreign key references. This field links records to the Resources master table:
+- **Single Resource Mode**: All records reference ResourceRefId = 1
+- **Multi-Resource Mode**: Records reference ResourceRefId = 1, 2, 3, etc. based on the resource they belong to
+- **Query Filtering**: Database Mode operations can filter by ResourceName to show only records for specific resource
 
 ### Database Mode Import
 - **Location**: User-specified directory (typically `output` or custom path)
@@ -1121,3 +1193,108 @@ TerraCorder exports 11 CSV files representing the complete relational database:
 - **Grouping**: Organized by file, service, or reference type
 - **Statistics**: Record counts for each category
 - **Performance**: Sub-second query execution after initial database load
+
+---
+
+## Example Queries
+
+### Find all services for a specific resource
+```powershell
+Import-Csv "output\Services.csv" | Where-Object { $_.ResourceRefId -eq 1 }
+```
+
+### Find all test functions for a specific resource
+```powershell
+Import-Csv "output\TestFunctions.csv" | Where-Object { $_.ResourceRefId -eq 2 }
+```
+
+### Find all resources in database
+```powershell
+Import-Csv "output\Resources.csv" | Select-Object ResourceRefId, ResourceName
+```
+
+### Find template functions for resource 1
+```powershell
+Import-Csv "output\TemplateFunctions.csv" | Where-Object { $_.ResourceRefId -eq 1 }
+```
+
+### Find all structs across all resources
+```powershell
+Import-Csv "output\Structs.csv" | Select-Object StructRefId, StructName, ResourceRefId
+```
+
+### Multi-resource analysis: Compare test function counts
+```powershell
+$resources = Import-Csv "output\Resources.csv"
+$testFunctions = Import-Csv "output\TestFunctions.csv"
+
+$resources | ForEach-Object {
+    $resourceId = $_.ResourceRefId
+    $count = ($testFunctions | Where-Object { $_.ResourceRefId -eq $resourceId }).Count
+    [PSCustomObject]@{
+        ResourceName = $_.ResourceName
+        TestFunctionCount = $count
+    }
+}
+```
+
+### Find cross-resource template dependencies
+```powershell
+# Join TestFunctions with TemplateFunctions through IndirectConfigReferences
+$testFuncs = Import-Csv "output\TestFunctions.csv"
+$templateRefs = Import-Csv "output\TemplateReferences.csv"
+$indirectRefs = Import-Csv "output\IndirectConfigReferences.csv"
+$templateFuncs = Import-Csv "output\TemplateFunctions.csv"
+
+# Find tests using templates from different resources
+$templateRefs | ForEach-Object {
+    $testFunc = $testFuncs | Where-Object { $_.TestFunctionRefId -eq $_.TestFunctionRefId } | Select-Object -First 1
+    $indirectRef = $indirectRefs | Where-Object { $_.TemplateReferenceRefId -eq $_.TemplateReferenceRefId } | Select-Object -First 1
+    if ($indirectRef) {
+        $templateFunc = $templateFuncs | Where-Object { $_.TemplateFunctionRefId -eq $indirectRef.SourceTemplateFunctionRefId } | Select-Object -First 1
+        if ($testFunc.ResourceRefId -ne $templateFunc.ResourceRefId) {
+            [PSCustomObject]@{
+                TestResource = $testFunc.ResourceRefId
+                TemplateResource = $templateFunc.ResourceRefId
+                TestFunction = $testFunc.FunctionName
+                TemplateFunction = $templateFunc.TemplateFunctionName
+            }
+        }
+    }
+}
+```
+
+---
+
+## Database Integrity
+
+### Constraints
+- All primary keys are unique integers
+- Foreign keys reference valid records in parent tables
+- ResourceRefId values are sequential starting from 1
+- No orphaned records (all child records have valid parent references)
+
+### Validation
+- Database initialization validates all table structures
+- Foreign key relationships checked during population
+- CSV export validates all references before writing
+
+### Performance
+- In-memory database for fast queries during processing
+- Multi-threaded population with thread-safe updates
+- CSV export optimized for large datasets (tested with 1000+ test functions)
+
+---
+
+## Version History
+
+### Current Version
+- **Multi-Resource Support**: Added ResourceRefId to Resources, Services, Structs, TestFunctions, TemplateFunctions
+- **Pull Request Mode**: Auto-discovery of resources from GitHub PRs
+- **Database Mode Filtering**: Query by specific resource in multi-resource databases
+- **12-Table Design**: Complete normalized relational model with comprehensive foreign keys
+
+### Legacy Compatibility
+- Single-resource databases have ResourceRefId = 1 for all records
+- All existing queries work unchanged
+- New queries can optionally filter by ResourceRefId

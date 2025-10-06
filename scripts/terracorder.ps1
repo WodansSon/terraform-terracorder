@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Find tests to run when modifying a specific Azure resource with database tracking
+    Find tests to run when modifying Azure resources with database tracking
 
 .DESCRIPTION
     Enhanced tool that answers: "When I change a resource, what tests do I need to run?"
@@ -13,6 +13,11 @@
     2. Via template references
     3. Via acceptance.RunTestsInSequence calls
 
+    Supports multiple modes:
+    - Single resource: -ResourceName "azurerm_subnet"
+    - Multiple resources: -ResourceNames @("azurerm_subnet", "azurerm_virtual_network")
+    - Pull Request: -PullRequest 1234 (auto-detects affected resources)
+
     DATABASE MODE (Query Only):
     Loads existing CSV database and provides deep analysis without re-scanning files.
     Use this mode for fast, repeatable queries and visualization of previously discovered data.
@@ -20,7 +25,14 @@
     If no Show* parameter is specified in Database Mode, displays database statistics only.
 
 .PARAMETER ResourceName
-    [Discovery Mode] The Azure resource name to search for (e.g., azurerm_subnet)
+    [Discovery Mode] Single Azure resource name to search for (e.g., azurerm_subnet)
+
+.PARAMETER ResourceNames
+    [Discovery Mode] Array of Azure resource names to search for (e.g., @("azurerm_subnet", "azurerm_virtual_network"))
+
+.PARAMETER PullRequest
+    [Discovery Mode] GitHub Pull Request number or URL to analyze for affected resources
+    Example: 1234 or "https://github.com/hashicorp/terraform-provider-azurerm/pull/1234"
 
 .PARAMETER RepositoryDirectory
     [Discovery Mode] Path to terraform-provider-azurerm repository root
@@ -41,8 +53,20 @@
     Display comprehensive formatted help message
 
 .EXAMPLE
-    # Discovery Mode: Full scan
+    # Discovery Mode: Single resource
     .\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+.EXAMPLE
+    # Discovery Mode: Multiple resources
+    .\terracorder.ps1 -ResourceNames @("azurerm_subnet", "azurerm_virtual_network") -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+.EXAMPLE
+    # Discovery Mode: Analyze Pull Request
+    .\terracorder.ps1 -PullRequest 1234 -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+.EXAMPLE
+    # Discovery Mode: Analyze Pull Request with URL
+    .\terracorder.ps1 -PullRequest "https://github.com/hashicorp/terraform-provider-azurerm/pull/1234" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
 
 .EXAMPLE
     # Database Mode: Show direct references
@@ -57,7 +81,7 @@
     .\terracorder.ps1 -Help
 
 .NOTES
-    Version: 1.0
+    Version: 2.0
     Author: Terraform Test Discovery Tool
 
 .LINK
@@ -66,11 +90,22 @@
 
 [CmdletBinding(DefaultParameterSetName = "DiscoveryMode")]
 param(
-    # Discovery Mode parameters
+    # Discovery Mode parameters - Single Resource (also used for Database Mode filtering)
     [Parameter(Mandatory = $false, ParameterSetName = "DiscoveryMode")]
+    [Parameter(Mandatory = $false, ParameterSetName = "DatabaseMode")]
     [string]$ResourceName,
 
+    # Discovery Mode parameters - Multiple Resources
+    [Parameter(Mandatory = $false, ParameterSetName = "DiscoveryModeMultiple")]
+    [string[]]$ResourceNames,
+
+    # Discovery Mode parameters - Pull Request
+    [Parameter(Mandatory = $false, ParameterSetName = "DiscoveryModePR")]
+    [string]$PullRequest,
+
     [Parameter(Mandatory = $false, ParameterSetName = "DiscoveryMode")]
+    [Parameter(Mandatory = $false, ParameterSetName = "DiscoveryModeMultiple")]
+    [Parameter(Mandatory = $false, ParameterSetName = "DiscoveryModePR")]
     [string]$RepositoryDirectory,
 
     # Database Mode parameters
@@ -170,6 +205,7 @@ $ModulesPath = Join-Path $PSScriptRoot "..\modules"
 Import-Module (Join-Path $ModulesPath "UI.psm1") -Force                          # Base UI functions (no dependencies)
 Import-Module (Join-Path $ModulesPath "Database.psm1") -Force                    # Database functions (uses UI)
 Import-Module (Join-Path $ModulesPath "PatternAnalysis.psm1") -Force             # Pattern analysis (no dependencies)
+Import-Module (Join-Path $ModulesPath "GitHubIntegration.psm1") -Force           # GitHub PR integration (uses UI)
 Import-Module (Join-Path $ModulesPath "TestFunctionProcessing.psm1") -Force      # Function extraction (uses PatternAnalysis, Database)
 Import-Module (Join-Path $ModulesPath "TestFunctionStepsProcessing.psm1") -Force # Step-level analysis (uses Database, TestFunctionProcessing)
 Import-Module (Join-Path $ModulesPath "RelationalQueries.psm1") -Force           # Relational queries (uses Database)
@@ -195,11 +231,12 @@ if (-not $ExportDirectory) {
 #region Mode Detection and Validation
 # Determine operation mode: Discovery Mode or Database Mode
 $IsDiscoveryMode = $false
+$ResourcesToProcess = @()
 
 if ($DatabaseDirectory) {
     # Database Mode
-    # Validate mutually exclusive parameters
-    if ($ResourceName -or $RepositoryDirectory) {
+    # Validate mutually exclusive parameters (ResourceName is allowed for filtering)
+    if ($ResourceNames -or $PullRequest -or $RepositoryDirectory) {
         Show-MutuallyExclusiveModesError
         exit 1
     }
@@ -213,8 +250,89 @@ if ($DatabaseDirectory) {
     # If no query option specified, default to showing statistics only
     $ShowStatisticsOnly = -not ($ShowDirectReferences -or $ShowIndirectReferences)
 
+} elseif ($PullRequest -and $RepositoryDirectory) {
+    # Pull Request Discovery Mode
+    $IsDiscoveryMode = $true
+
+    # Validate repository directory exists
+    if (-not (Test-Path $RepositoryDirectory)) {
+        Show-DirectoryNotFoundError -DirectoryType "Repository" -DirectoryPath $RepositoryDirectory
+        exit 1
+    }
+
+    # Discover resources from PR
+    try {
+        $ResourcesToProcess = Get-ResourcesFromPullRequest `
+            -PullRequest $PullRequest `
+            -RepositoryDirectory $RepositoryDirectory `
+            -NumberColor $Script:NumberColor `
+            -ItemColor $Script:ItemColor `
+            -InfoColor $Script:InfoColor `
+            -BaseColor $Script:BaseColor
+
+        if ($ResourcesToProcess.Count -eq 0) {
+            Write-Host ""
+            Write-Host "  No resources found in PR #$PullRequest to analyze." -ForegroundColor Yellow
+            Write-Host "  This could mean:" -ForegroundColor $Script:InfoColor
+            Write-Host "    • No *_resource.go files were modified" -ForegroundColor $Script:BaseColor
+            Write-Host "    • Only test files were modified" -ForegroundColor $Script:BaseColor
+            Write-Host "    • Only documentation was changed" -ForegroundColor $Script:BaseColor
+            Write-Host ""
+            exit 0
+        }
+
+        Show-PullRequestSummary `
+            -PullRequest $PullRequest `
+            -Resources $ResourcesToProcess `
+            -NumberColor $Script:NumberColor `
+            -ItemColor $Script:ItemColor `
+            -InfoColor $Script:InfoColor `
+            -BaseColor $Script:BaseColor
+
+    } catch {
+        Write-Host ""
+        Write-Host "  ERROR: Failed to analyze Pull Request #$PullRequest" -ForegroundColor Red
+        Write-Host "  $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+
+} elseif ($ResourceNames -and $RepositoryDirectory) {
+    # Multiple Resources Discovery Mode
+    $IsDiscoveryMode = $true
+
+    # Validate repository directory exists
+    if (-not (Test-Path $RepositoryDirectory)) {
+        Show-DirectoryNotFoundError -DirectoryType "Repository" -DirectoryPath $RepositoryDirectory
+        exit 1
+    }
+
+    # Validate all resource name formats
+    $invalidResources = @()
+    foreach ($resource in $ResourceNames) {
+        if (-not $resource.StartsWith("azurerm_")) {
+            $invalidResources += $resource
+        }
+    }
+
+    if ($invalidResources.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  ERROR: Invalid resource name(s) detected" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  Resource names must start with 'azurerm_'" -ForegroundColor $Script:InfoColor
+        Write-Host ""
+        Write-Host "  Invalid resources:" -ForegroundColor Yellow
+        foreach ($resource in $invalidResources) {
+            Write-Host "    • $resource" -ForegroundColor $Script:BaseColor
+        }
+        Write-Host ""
+        exit 1
+    }
+
+    $ResourcesToProcess = $ResourceNames
+
 } elseif ($ResourceName -and $RepositoryDirectory) {
-    # Discovery Mode
+    # Single Resource Discovery Mode
     $IsDiscoveryMode = $true
 
     # Validate repository directory exists
@@ -229,6 +347,8 @@ if ($DatabaseDirectory) {
         exit 1
     }
 
+    $ResourcesToProcess = @($ResourceName)
+
 } else {
     # Neither mode properly specified
     Show-MissingParametersError
@@ -242,7 +362,22 @@ $ExportDirectoryAbsolute = [System.IO.Path]::GetFullPath($ExportDirectory)
 
 # Show appropriate banner based on mode
 if ($IsDiscoveryMode) {
-    Show-InitialBanner -DiscoveryMode -ResourceName $ResourceName -RepositoryDirectory $RepositoryDirectory -ExportDirectory $ExportDirectoryAbsolute
+    $bannerParams = @{
+        DiscoveryMode = $true
+        RepositoryDirectory = $RepositoryDirectory
+        ExportDirectory = $ExportDirectoryAbsolute
+    }
+
+    if ($PullRequest) {
+        $bannerParams['PullRequest'] = $PullRequest
+        $bannerParams['ResourceNames'] = $ResourcesToProcess
+    } elseif ($ResourcesToProcess.Count -eq 1) {
+        $bannerParams['ResourceName'] = $ResourcesToProcess[0]
+    } else {
+        $bannerParams['ResourceNames'] = $ResourcesToProcess
+    }
+
+    Show-InitialBanner @bannerParams
 } else {
     Show-InitialBanner -DatabaseDirectory $DatabaseDirectory -ExportDirectory $ExportDirectoryAbsolute
 }
@@ -267,23 +402,60 @@ try {
             exit 1
         }
 
-        #region Database and Pattern Initialization
-        # Initialize database first, then regex patterns
+        # Track overall results across all resources
+        $currentResourceIndex = 0
+        $totalResources = $ResourcesToProcess.Count
+
+        #region Database and Pattern Initialization (One-Time Setup)
+        # Initialize database ONCE before processing any resources
         Show-PhaseHeaderGeneric -Title "Database Initialization" -Description "Terra-Corder"
-        Initialize-TerraDatabase -ExportDirectory $ExportDirectoryAbsolute -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -ElapsedColor $Script:ElapsedColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Initialize-TerraDatabase -ExportDirectory $ExportDirectoryAbsolute -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourcesToProcess[0] -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -ElapsedColor $Script:ElapsedColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         # Initialize regex patterns after database is ready and set as global
         $Global:RegexPatterns = Initialize-RegexPatterns
 
         # Get reference to the ReferenceTypes from Database module after initialization and set as global
         $Global:ReferenceTypes = & (Get-Module Database) { $script:ReferenceTypes }
+
+        # Initialize accumulators for cross-resource data (used in Phase 7)
+        $allTestResultsAccumulator = @()
+        $allSequentialTestsAccumulator = @()
+        $resourceFunctionsAccumulator = @()
         #endregion
+
+        # Loop through each resource
+        foreach ($CurrentResourceName in $ResourcesToProcess) {
+            $currentResourceIndex++
+
+            # Show resource processing header for multiple resources
+            if ($totalResources -gt 1) {
+                Write-Host ""
+                Write-Separator
+                Write-Host ""
+                Write-Host "  PROCESSING RESOURCE " -ForegroundColor $Script:InfoColor -NoNewline
+                Write-Host "$currentResourceIndex" -ForegroundColor $Script:NumberColor -NoNewline
+                Write-Host " OF " -ForegroundColor $Script:InfoColor -NoNewline
+                Write-Host "$totalResources" -ForegroundColor $Script:NumberColor
+                Write-Host ""
+                Write-Host "  Resource: " -ForegroundColor $Script:InfoColor -NoNewline
+                Write-Host "$CurrentResourceName" -ForegroundColor Yellow
+                Write-Host ""
+                Write-Separator
+                Write-Host ""
+            }
+
+            $resourceStartTime = Get-Date
+
+        # Add current resource to the database (for resources after the first one)
+        if ($currentResourceIndex -gt 1) {
+            Add-ResourceToDatabase -ResourceName $CurrentResourceName
+        }
         #region Phase 1: File Discovery and Filtering
         # Phase 1: File discovery and filtering
         Show-PhaseHeader -PhaseNumber 1 -PhaseDescription "File Discovery and Filtering"
         $phase1Start = Get-Date
 
-        $discoveryResult = Get-TestFilesContainingResource -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -UseParallel $true -ThreadCount $Global:ThreadCount -NumberColor $Script:NumberColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
+        $discoveryResult = Get-TestFilesContainingResource -RepositoryDirectory $RepositoryDirectory -ResourceName $CurrentResourceName -UseParallel $true -ThreadCount $Global:ThreadCount -NumberColor $Script:NumberColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
         $allTestFileNames = $discoveryResult.AllFiles
         $relevantFileNames = $discoveryResult.RelevantFiles
         $fileContents = $discoveryResult.FileContents
@@ -350,8 +522,17 @@ try {
 
         if ($allRelevantFiles.Count -eq 0) {
             Write-Host ""
-            Show-PhaseMessageHighlight -Message "No Tests Found For Resource '$ResourceName'" -HighlightText $($ResourceName) -HighlightColor "Magenta" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            exit 0
+            Show-PhaseMessageHighlight -Message "No Tests Found For Resource '$CurrentResourceName'" -HighlightText $($CurrentResourceName) -HighlightColor "Magenta" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+            # Continue to next resource if processing multiple, otherwise exit
+            if ($totalResources -gt 1) {
+                Write-Host ""
+                Write-Host "  Skipping to next resource..." -ForegroundColor Yellow
+                Write-Host ""
+                continue
+            } else {
+                exit 0
+            }
         }
         #endregion
 
@@ -365,7 +546,7 @@ try {
             $fileContents = @{}
         }
 
-        $databaseResult = Invoke-DatabasePopulation -AllRelevantFiles $allRelevantFiles -FileContents $fileContents -RepositoryDirectory $RepositoryDirectory -RegexPatterns $Global:RegexPatterns -ThreadCount $Global:ThreadCount -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
+        $databaseResult = Invoke-DatabasePopulation -AllRelevantFiles $allRelevantFiles -FileContents $fileContents -RepositoryDirectory $RepositoryDirectory -RegexPatterns $Global:RegexPatterns -ThreadCount $Global:ThreadCount -ResourceName $CurrentResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
         $allTestResults = $databaseResult.AllTestResults
         $allSequentialTests = $databaseResult.AllSequentialTests
         $functionDatabase = $databaseResult.FunctionDatabase
@@ -392,7 +573,7 @@ try {
         # Phase 4b: Build template function database for indirect reference detection
         $phase4bStart = Get-Date
 
-        $templateResult = Invoke-TemplateFunctionProcessing -AllRelevantFiles $allRelevantFiles -FileContents $fileContents -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -RegexPatterns $Global:RegexPatterns -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
+        $templateResult = Invoke-TemplateFunctionProcessing -AllRelevantFiles $allRelevantFiles -FileContents $fileContents -RepositoryDirectory $RepositoryDirectory -ResourceName $CurrentResourceName -RegexPatterns $Global:RegexPatterns -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
 
         $allTemplateFunctionsWithResource = $templateResult.TemplateFunctions
         # Template database is used internally by the processing functions
@@ -433,10 +614,10 @@ try {
         # Globals are already set during initialization
 
         # Use relational approach - pre-load ALL database data ONCE, use O(1) hashtable lookups!
-        Invoke-RelationalReferencesPopulation -AllRelevantFiles $allRelevantFiles -ResourceName $ResourceName -RepositoryDirectory $RepositoryDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor | Out-Null
+        Invoke-RelationalReferencesPopulation -AllRelevantFiles $allRelevantFiles -ResourceName $CurrentResourceName -RepositoryDirectory $RepositoryDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor | Out-Null
 
         # Phase 5.5: Classify ServiceImpactTypeId for template dependencies
-        Update-ServiceImpactReferentialIntegrity -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
+        Update-ServiceImpactReferentialIntegrity -ResourceName $CurrentResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
 
         # Note: Proper go test command generation moved to Phase 7 using database-driven approach
 
@@ -476,12 +657,47 @@ try {
         Show-PhaseCompletion -PhaseNumber 6 -DurationMs ([math]::Round($phase6Elapsed.TotalMilliseconds, 0))
         #endregion
 
-        #region Phase 7: Generate Go Test Commands
-        # Phase 7: Group by service and create test command
-        Show-PhaseHeader -PhaseNumber 7 -PhaseDescription "Generating go test commands"
+        #region Accumulate data for Phase 7 (cross-resource go test generation)
+        # Accumulate test results and functions from this resource for final Phase 7 processing
+        $allTestResultsAccumulator += $allTestResults
+        $allSequentialTestsAccumulator += $allSequentialTests
+        $resourceFunctionsAccumulator += $resourceFunctions
+        #endregion
+
+        #region Display Results Per Resource
+        # Display console output using the new UI function
+        # Note: Phase 7 (go test commands) moved to after all resources processed
+        # TODO: Implement full Show-FinalSummary with complete AnalysisData structure
+        #       This should include:
+        #       1. Repository Summary (Files With Matches, Direct/Template/Cross-File References, etc.)
+        #       2. Unique Test Prefixes section (list of all TestAcc prefixes found)
+        #       3. Required Acceptance Test Execution (moved to Phase 7 after all resources)
+
+        # For now, skip per-resource test command display when processing multiple resources
+        # Full test commands will be shown after Phase 7 completes
+
+        # Calculate total execution time for this resource
+        $resourceElapsed = (Get-Date) - $resourceStartTime
+
+        if ($totalResources -gt 1) {
+            Write-Host ""
+            Write-Host "  Resource Processing Time: " -ForegroundColor $Script:InfoColor -NoNewline
+            $resourceMs = [math]::Round($resourceElapsed.TotalMilliseconds, 0)
+            $resourceSeconds = [math]::Round($resourceElapsed.TotalSeconds, 1)
+            Write-Host "$resourceMs ms ($resourceSeconds seconds)" -ForegroundColor $Script:ElapsedColor
+            Write-Host ""
+        }
+        #endregion
+
+        # End of resource processing loop
+        } # End foreach $CurrentResourceName
+
+        #region Phase 7: Generate Go Test Commands (After All Resources Processed)
+        # Phase 7: Group by service and create test command - run once with all accumulated data
+        Show-PhaseHeader -PhaseNumber 7 -PhaseDescription "Generating go test commands for all resources"
         $phase7Start = Get-Date
 
-        $serviceResult = Get-ServiceTestResults -AllTestResults $allTestResults -AllSequentialTests $allSequentialTests -ResourceFunctions $resourceFunctions
+        $serviceResult = Get-ServiceTestResults -AllTestResults $allTestResultsAccumulator -AllSequentialTests $allSequentialTestsAccumulator -ResourceFunctions $resourceFunctionsAccumulator
         $serviceGroups = $serviceResult.ServiceGroups
 
         $commandsResult = Show-GoTestCommands -ServiceGroups $serviceGroups -ExportDirectory $ExportDirectoryAbsolute -WriteToFile
@@ -497,8 +713,8 @@ try {
         Show-PhaseCompletion -PhaseNumber 7 -DurationMs ([math]::Round($phase7Elapsed.TotalMilliseconds, 0))
         #endregion
 
-        #region Phase 8: Output Results
-        # Phase 8: Output results
+        #region Phase 8: CSV Export (After All Resources Processed)
+        # Phase 8: Output results - Export database once after all resources processed
         $phase8Start = Get-Date
         Show-PhaseHeader -PhaseNumber 8 -PhaseDescription "Exporting Database CSV Files"
 
@@ -506,24 +722,26 @@ try {
 
         $phase8Elapsed = (Get-Date) - $phase8Start
         Show-PhaseCompletion -PhaseNumber 8 -DurationMs ([math]::Round($phase8Elapsed.TotalMilliseconds, 0))
-
-        # Ensure variables are still properly initialized for Phase 8
-        if ($null -eq $allSequentialTests -or $allSequentialTests -isnot [array]) { $allSequentialTests = @() }
-        if ($null -eq $resourceFunctions -or $resourceFunctions -isnot [array]) { $resourceFunctions = @() }
-
-        # Convert to arrays explicitly to ensure proper type and force PowerShell to treat them as collections
-        $allSequentialTests = [array]@($allSequentialTests)
-        $resourceFunctions = [array]@($resourceFunctions)
         #endregion
 
-        #region Display Results and Completion
-        # Display console output using the new UI function
-        # TODO: Implement full Show-FinalSummary with complete AnalysisData structure
-        #       This should include:
-        #       1. Repository Summary (Files With Matches, Direct/Template/Cross-File References, etc.)
-        #       2. Unique Test Prefixes section (list of all TestAcc prefixes found)
-        #       3. Required Acceptance Test Execution (current go test commands - implemented)
+        #region Display Final Test Commands
+        # Display console output with all test commands from all resources
         Show-RunTestsByService -ServiceGroups $serviceGroups -CommandsResult $commandsResult -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor
+        #endregion
+
+        # Final summary for multiple resources
+        if ($totalResources -gt 1) {
+            Write-Host ""
+            Write-Separator
+            Write-Host ""
+            Write-Host "  ALL RESOURCES PROCESSED" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "  Total Resources: " -ForegroundColor $Script:InfoColor -NoNewline
+            Write-Host "$totalResources" -ForegroundColor $Script:NumberColor
+            Write-Host ""
+            Write-Separator
+            Write-Host ""
+        }
 
         # Calculate total execution time
         $totalElapsed = (Get-Date) - $scriptStartTime
@@ -539,20 +757,23 @@ try {
     if (-not $IsDiscoveryMode) {
         #region DATABASE MODE
         # Import database from CSV files
-            Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor | Out-Null
+        $importedResources = Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+        # Set imported resources in DatabaseMode module for filtering
+        Set-ImportedResourcesCache -Resources $importedResources
 
         # Execute requested query operations
         if ($ShowStatisticsOnly) {
             # Default behavior: Show database statistics and available options
-            Show-DatabaseStatistics -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-DatabaseStatistics -Resources $importedResources -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
         } else {
             # Show individual reference types if requested
             if ($ShowDirectReferences) {
-                Show-DirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                Show-DirectReferences -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
             }
 
             if ($ShowIndirectReferences) {
-                Show-IndirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                Show-IndirectReferences -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
             }
         }
 

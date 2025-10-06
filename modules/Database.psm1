@@ -199,6 +199,9 @@ function Initialize-TerraDatabase {
     $script:SequentialRefIdCounter = 1
     $script:TemplateReferenceRefIdCounter = 1
 
+    # Track current resource being processed (for multi-resource support)
+    $script:CurrentResourceRefId = 1
+
     # INITIALIZE NORMALIZED LOOKUP TABLES (master data)
     Show-PhaseMessage -Message "Creating Database Tables" -BaseColor $BaseColor -InfoColor $InfoColor
 
@@ -287,6 +290,7 @@ function Add-ServiceRecord {
     $script:Services[$serviceRefId] = [PSCustomObject]@{
         ServiceRefId = $serviceRefId
         Name = $Name
+        ResourceRefId = $script:CurrentResourceRefId
     }
 
     return $serviceRefId
@@ -333,6 +337,7 @@ function Add-StructRecord {
         FileRefId = $FileRefId
         Line = $Line
         StructName = $StructName
+        ResourceRefId = $script:CurrentResourceRefId
     }
 
     $script:Structs[$structRefId] = $struct
@@ -377,6 +382,7 @@ function Add-TestFunctionRecord {
         TestPrefix = $TestPrefix                    # Test prefix up to and including first underscore
         SequentialEntryPointRefId = $SequentialEntryPointRefId # Foreign key to the entry point function that calls this function
         FunctionBody = $FunctionBody                # Individual function body content to eliminate file duplication
+        ResourceRefId = $script:CurrentResourceRefId # Foreign key to Resources
     }
 
     $script:TestFunctions[$functionRefId] = $testFunction
@@ -804,6 +810,7 @@ function Add-TemplateFunctionRecord {
         ReceiverVariable = $ReceiverVariable
         Line = $Line
         FunctionBody = $FunctionBody
+        ResourceRefId = $script:CurrentResourceRefId
     }
 
     return $templateFunctionRefId
@@ -973,12 +980,33 @@ function Get-TestFunctionById {
 function Get-SequentialReferences {
     <#
     .SYNOPSIS
-    Get all sequential reference records
+    Get all sequential reference records with optional resource filtering
 
     .DESCRIPTION
     Returns all sequential reference records that link referenced functions to their entry points
+
+    .PARAMETER ResourceRefId
+    Optional filter to return only references for specific resource
+
+    .RETURNS
+    Array of sequential reference records
     #>
-    return $script:SequentialReferences.Values
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$ResourceRefId = 0
+    )
+
+    $allRefs = $script:SequentialReferences.Values
+
+    # If ResourceRefId filter specified, filter by entry point test function resource
+    if ($ResourceRefId -gt 0) {
+        return @($allRefs | Where-Object {
+            $entryFunc = $script:TestFunctions[$_.EntryPointFunctionRefId]
+            $entryFunc -and $entryFunc.ResourceRefId -eq $ResourceRefId
+        })
+    }
+
+    return $allRefs
 }
 
 function Get-FunctionBodyFromStruct {
@@ -1092,22 +1120,103 @@ function Update-CrossFileStructReferences {
 }
 
 function Get-DirectResourceReferences {
-    return $script:DirectResourceReferences.Values
+    <#
+    .SYNOPSIS
+    Get direct resource references with optional resource filtering
+
+    .PARAMETER ResourceRefId
+    Optional filter to return only references for specific resource
+
+    .RETURNS
+    Array of direct resource reference records
+    #>
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$ResourceRefId = 0
+    )
+
+    $allRefs = $script:DirectResourceReferences.Values
+
+    # If ResourceRefId filter specified, filter by files that belong to that resource
+    if ($ResourceRefId -gt 0) {
+        # Get all FileRefIds for the specified resource
+        $resourceFileIds = $script:Files.Values | Where-Object {
+            $service = $script:Services[$_.ServiceRefId]
+            $service -and $service.ResourceRefId -eq $ResourceRefId
+        } | ForEach-Object { $_.FileRefId }
+
+        # Filter references to only those files
+        return @($allRefs | Where-Object { $_.FileRefId -in $resourceFileIds })
+    }
+
+    return $allRefs
 }
 
 function Get-IndirectConfigReferences {
-    return $script:IndirectConfigReferences.Values
+    <#
+    .SYNOPSIS
+    Get indirect config references with optional resource filtering
+
+    .PARAMETER ResourceRefId
+    Optional filter to return only references for specific resource
+
+    .RETURNS
+    Array of indirect config reference records
+    #>
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$ResourceRefId = 0
+    )
+
+    $allRefs = $script:IndirectConfigReferences.Values
+
+    # If ResourceRefId filter specified, filter by test functions that belong to that resource
+    if ($ResourceRefId -gt 0) {
+        # Filter to only indirect refs where the test function belongs to the specified resource
+        return @($allRefs | Where-Object {
+            $templateRef = $script:TemplateReferences[$_.TemplateReferenceRefId]
+            if ($templateRef) {
+                $testFunc = $script:TestFunctions[$templateRef.TestFunctionRefId]
+                $testFunc -and $testFunc.ResourceRefId -eq $ResourceRefId
+            } else {
+                $false
+            }
+        })
+    }
+
+    return $allRefs
 }
 
 function Get-TemplateReferences {
     <#
     .SYNOPSIS
-    Get all template reference records
+    Get all template reference records with optional resource filtering
 
     .DESCRIPTION
     Returns all template reference records that link test functions to their template method calls
+
+    .PARAMETER ResourceRefId
+    Optional filter to return only references for specific resource
+
+    .RETURNS
+    Array of template reference records
     #>
-    return $script:TemplateReferences.Values
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$ResourceRefId = 0
+    )
+
+    $allRefs = $script:TemplateReferences.Values
+
+    # If ResourceRefId filter specified, filter by test function resource
+    if ($ResourceRefId -gt 0) {
+        return @($allRefs | Where-Object {
+            $testFunc = $script:TestFunctions[$_.TestFunctionRefId]
+            $testFunc -and $testFunc.ResourceRefId -eq $ResourceRefId
+        })
+    }
+
+    return $allRefs
 }
 
 function Get-Files {
@@ -1536,31 +1645,19 @@ function Export-DatabaseToCSV {
         # Export each table to CSV with headers
         Export-TableWithHeaders -Data @($script:Resources.Values) -FilePath (Join-Path $exportDir "Resources.csv") -EmptyRowTemplate $emptyTemplates.Resources
 
-        # Add ResourceRefId = 1 to records during export (cold path) to avoid overhead during record creation (hot path)
-        $servicesWithResourceRef = @($script:Services.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
-        Export-TableWithHeaders -Data $servicesWithResourceRef -FilePath (Join-Path $exportDir "Services.csv") -EmptyRowTemplate $emptyTemplates.Services
+        # ResourceRefId is now included in records during creation (not added during export)
+        Export-TableWithHeaders -Data @($script:Services.Values) -FilePath (Join-Path $exportDir "Services.csv") -EmptyRowTemplate $emptyTemplates.Services
 
         Export-TableWithHeaders -Data @($script:Files.Values) -FilePath (Join-Path $exportDir "Files.csv") -EmptyRowTemplate $emptyTemplates.Files
 
-        $structsWithResourceRef = @($script:Structs.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
-        Export-TableWithHeaders -Data $structsWithResourceRef -FilePath (Join-Path $exportDir "Structs.csv") -EmptyRowTemplate $emptyTemplates.Structs
+        Export-TableWithHeaders -Data @($script:Structs.Values) -FilePath (Join-Path $exportDir "Structs.csv") -EmptyRowTemplate $emptyTemplates.Structs
 
-        $testFunctionsWithResourceRef = @($script:TestFunctions.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
-        Export-TableWithHeaders -Data $testFunctionsWithResourceRef -FilePath (Join-Path $exportDir "TestFunctions.csv") -EmptyRowTemplate $emptyTemplates.TestFunctions
+        Export-TableWithHeaders -Data @($script:TestFunctions.Values) -FilePath (Join-Path $exportDir "TestFunctions.csv") -EmptyRowTemplate $emptyTemplates.TestFunctions
         Export-TableWithHeaders -Data @($script:TestFunctionSteps.Values) -FilePath (Join-Path $exportDir "TestFunctionSteps.csv") -EmptyRowTemplate $emptyTemplates.TestFunctionSteps
         Export-TableWithHeaders -Data @($script:DirectResourceReferences.Values) -FilePath (Join-Path $exportDir "DirectResourceReferences.csv") -EmptyRowTemplate $emptyTemplates.DirectResourceReferences
         Export-TableWithHeaders -Data @($script:IndirectConfigReferences.Values) -FilePath (Join-Path $exportDir "IndirectConfigReferences.csv") -EmptyRowTemplate $emptyTemplates.IndirectConfigReferences
 
-        $templateFunctionsWithResourceRef = @($script:TemplateFunctions.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
-        Export-TableWithHeaders -Data $templateFunctionsWithResourceRef -FilePath (Join-Path $exportDir "TemplateFunctions.csv") -EmptyRowTemplate $emptyTemplates.TemplateFunctions
+        Export-TableWithHeaders -Data @($script:TemplateFunctions.Values) -FilePath (Join-Path $exportDir "TemplateFunctions.csv") -EmptyRowTemplate $emptyTemplates.TemplateFunctions
 
         Export-TableWithHeaders -Data @($script:SequentialReferences.Values) -FilePath (Join-Path $exportDir "SequentialReferences.csv") -EmptyRowTemplate $emptyTemplates.SequentialReferences
         Export-TableWithHeaders -Data @($script:TemplateReferences.Values) -FilePath (Join-Path $exportDir "TemplateReferences.csv") -EmptyRowTemplate $emptyTemplates.TemplateReferences
@@ -2096,21 +2193,8 @@ function Import-DatabaseFromCSV {
         Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1} Records" -f "Imported", $totalRecords) -HighlightTexts @("$totalRecords", "Records") -HighlightColors @($NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
         Show-PhaseCompletionGeneric -Description "Database Initialization" -DurationMs $([math]::Round($importElapsed.TotalMilliseconds, 0))
 
-        return [PSCustomObject]@{
-            Success = $true
-            TotalRecords = $totalRecords
-            Services = $script:Services.Count
-            Files = $script:Files.Count
-            Structs = $script:Structs.Count
-            TestFunctions = $script:TestFunctions.Count
-            TestFunctionSteps = $script:TestFunctionSteps.Count
-            DirectResourceReferences = $script:DirectResourceReferences.Count
-            IndirectConfigReferences = $script:IndirectConfigReferences.Count
-            TemplateFunctions = $script:TemplateFunctions.Count
-            SequentialReferences = $script:SequentialReferences.Count
-            TemplateReferences = $script:TemplateReferences.Count
-            DurationMs = [math]::Round($importElapsed.TotalMilliseconds, 0)
-        }
+        # Return resources array for database mode filtering
+        return @($script:Resources.Values | Sort-Object ResourceRefId)
     }
     catch {
         Show-PhaseMessageHighlight -Message "Error importing database: $($_.Exception.Message)" -HighlightText "Error" -HighlightColor "Red" -BaseColor $BaseColor -InfoColor $InfoColor
@@ -2136,10 +2220,65 @@ function Add-ServiceForFile {
     return Add-ServiceRecord -Name $serviceName
 }
 
+function Add-ResourceToDatabase {
+    <#
+    .SYNOPSIS
+    Add an additional resource to the Resources table (for multi-resource analysis)
+
+    .PARAMETER ResourceName
+    The Terraform resource name to add (e.g., azurerm_virtual_network)
+
+    .DESCRIPTION
+    Adds a new resource record to the Resources table with an incremented ResourceRefId.
+    Used when processing multiple resources in a single run.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResourceName
+    )
+
+    # Increment the resource counter
+    $script:ResourceRefIdCounter++
+    $newRefId = $script:ResourceRefIdCounter
+
+    # Add the new resource
+    $script:Resources[$newRefId] = [PSCustomObject]@{
+        ResourceRefId = $newRefId
+        ResourceName = $ResourceName
+    }
+
+    # Update the current resource ID for subsequent database operations
+    $script:CurrentResourceRefId = $newRefId
+
+    Write-Verbose "Added resource '$ResourceName' with ResourceRefId=$newRefId"
+    return $newRefId
+}
+
+function Get-ResourceById {
+    <#
+    .SYNOPSIS
+    Get a resource record by its ResourceRefId
+
+    .PARAMETER ResourceRefId
+    The ResourceRefId to look up
+
+    .DESCRIPTION
+    Returns the resource record with matching ResourceRefId
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ResourceRefId
+    )
+
+    return $script:Resources[$ResourceRefId]
+}
+
 # Export only the functions that are actually used by the TerraCorder system
 Export-ModuleMember -Function @(
     # Database lifecycle functions
     'Initialize-TerraDatabase',
+    'Add-ResourceToDatabase',
+    'Get-ResourceById',
     'Close-TerraDatabase',
     'Export-DatabaseToCSV',
     'Import-DatabaseFromCSV',
