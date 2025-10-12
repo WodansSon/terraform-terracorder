@@ -123,9 +123,45 @@ Write-Host "$fullVersion" -ForegroundColor $versionColor
 $Global:ThreadCount = [Math]::Min(8, [Math]::Max(2, [Environment]::ProcessorCount))
 $threadText = if ($Global:ThreadCount -eq 1) { "thread" } else { "threads" }
 
+# Check Go installation (required for AST analyzer)
+$goInstalled = $false
+$goVersion = ""
+$goVersionMajor = 0
+$goVersionMinor = 0
+try {
+    $goVersionOutput = go version 2>$null
+    if ($LASTEXITCODE -eq 0 -and $goVersionOutput) {
+        $goInstalled = $true
+        # Extract version from output like "go version go1.21.0 windows/amd64"
+        if ($goVersionOutput -match 'go version go([\d\.]+)') {
+            $goVersion = $matches[1]
+            # Parse major.minor version
+            if ($goVersion -match '^(\d+)\.(\d+)') {
+                $goVersionMajor = [int]$matches[1]
+                $goVersionMinor = [int]$matches[2]
+            }
+        }
+    }
+} catch {
+    $goInstalled = $false
+}
+
+# Check if Go version meets minimum requirement (1.21+)
+$goVersionValid = $goInstalled -and (($goVersionMajor -gt 1) -or ($goVersionMajor -eq 1 -and $goVersionMinor -ge 21))
+
+Write-Host " Go Installation     : " -ForegroundColor Cyan -NoNewline
+if ($goInstalled) {
+    if ($goVersionValid) {
+        Write-Host "Go $goVersion" -ForegroundColor Green
+    } else {
+        Write-Host "Go $goVersion" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "Not Found" -ForegroundColor Yellow
+}
 
 # Check if requirements are met
-$meetsRequirements = ($currentEdition -eq 'Core') -and ($currentVersion.Major -ge 7)
+$meetsRequirements = ($currentEdition -eq 'Core') -and ($currentVersion.Major -ge 7) -and $goVersionValid
 
 if ($meetsRequirements) {
     Write-Host " Status              : " -ForegroundColor Cyan -NoNewline
@@ -136,24 +172,51 @@ if ($meetsRequirements) {
     Write-Host " Status              : " -ForegroundColor Cyan -NoNewline
     Write-Host "Unsupported" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "ERROR: " -ForegroundColor Cyan -NoNewline
-    Write-Host "PowerShell Core 7.0 or later required." -ForegroundColor Magenta
+    Write-Host "ERROR: " -ForegroundColor Red -NoNewline
+    Write-Host "Missing required dependencies." -ForegroundColor Magenta
     Write-Host ""
     Write-Host "Current environment:" -ForegroundColor Yellow
-    Write-Host "  Edition: " -ForegroundColor Cyan -NoNewline
+    Write-Host "  PowerShell Edition: " -ForegroundColor Cyan -NoNewline
     Write-Host "$currentEdition" -ForegroundColor Yellow
-    Write-Host "  Version: " -ForegroundColor Cyan -NoNewline
+    Write-Host "  PowerShell Version: " -ForegroundColor Cyan -NoNewline
     Write-Host "$fullVersion" -ForegroundColor Yellow
+    Write-Host "  Go Installation:    " -ForegroundColor Cyan -NoNewline
+    if ($goInstalled) {
+        if ($goVersionValid) {
+            Write-Host "Go $goVersion" -ForegroundColor Green
+        } else {
+            Write-Host "Go $goVersion (too old)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "Not Found" -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "Required:" -ForegroundColor Yellow
-    Write-Host "  Edition: " -ForegroundColor Cyan -NoNewline
+    Write-Host "  PowerShell Edition: " -ForegroundColor Cyan -NoNewline
     Write-Host "Core" -ForegroundColor Green
-    Write-Host "  Version: " -ForegroundColor Cyan -NoNewline
+    Write-Host "  PowerShell Version: " -ForegroundColor Cyan -NoNewline
     Write-Host "7.0 or later" -ForegroundColor Green
+    Write-Host "  Go Installation:    " -ForegroundColor Cyan -NoNewline
+    Write-Host "1.21 or later" -ForegroundColor Green
     Write-Host ""
-    Write-Host "Please install PowerShell version 7.0 or later from: " -ForegroundColor Cyan -NoNewline
-    Write-Host "https://github.com/PowerShell/PowerShell" -ForegroundColor Yellow
-    Write-Host ""
+
+    if (-not $goVersionValid) {
+        if (-not $goInstalled) {
+            Write-Host "Go is required to run the AST analyzer." -ForegroundColor Cyan
+            Write-Host "Install Go 1.21 or later from: " -ForegroundColor Cyan -NoNewline
+            Write-Host "https://go.dev/dl/" -ForegroundColor Yellow
+        } else {
+            Write-Host "Go version $goVersion is too old for the AST analyzer." -ForegroundColor Cyan
+            Write-Host "Upgrade to Go 1.21 or later from: " -ForegroundColor Cyan -NoNewline
+            Write-Host "https://go.dev/dl/" -ForegroundColor Yellow
+        }
+        Write-Host ""
+    }    if ($currentEdition -ne 'Core' -or $currentVersion.Major -lt 7) {
+        Write-Host "Install PowerShell Core 7.0 or later from: " -ForegroundColor Cyan -NoNewline
+        Write-Host "https://github.com/PowerShell/PowerShell" -ForegroundColor Yellow
+        Write-Host ""
+    }
+
     exit 1
 }
 #endregion
