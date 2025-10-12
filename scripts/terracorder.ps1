@@ -321,6 +321,45 @@ try {
         Show-PhaseCompletion -PhaseNumber 3 -DurationMs ([math]::Round($phase3Duration.TotalMilliseconds, 0))
         #endregion
 
+        #region Phase 4: Generate Go Test Commands
+        Show-PhaseHeader -PhaseNumber 4 -PhaseDescription "Generating Go Test Commands"
+        $phase4Start = Get-Date
+
+        # Get all services that have test files in the database
+        $allServices = Get-Services
+        $allFiles = Get-Files
+        $allTestFunctions = Get-TestFunctions
+
+        # Group files by service to create service groups
+        $serviceGroups = @()
+        foreach ($service in $allServices) {
+            $serviceFiles = $allFiles | Where-Object { $_.ServiceRefId -eq $service.ServiceRefId }
+            if ($serviceFiles) {
+                $serviceGroups += @{
+                    Name = $service.Name
+                    ServiceRefId = $service.ServiceRefId
+                }
+            }
+        }
+
+        # Sort service groups alphabetically by name
+        $serviceGroups = $serviceGroups | Sort-Object -Property Name
+
+        if ($serviceGroups.Count -gt 0) {
+            $commandsResult = Show-GoTestCommands -ServiceGroups $serviceGroups -ExportDirectory $ExportDirectoryAbsolute -WriteToFile
+            Show-PhaseMessageHighlight -Message "Generated test commands for $($serviceGroups.Count) services" -HighlightText "$($serviceGroups.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-PhaseMessageHighlight -Message "Exported: go_test_commands.txt" -HighlightText "go_test_commands.txt" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+            # Display test commands to console
+            Show-RunTestsByService -ServiceGroups $serviceGroups -CommandsResult $commandsResult -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor
+        } else {
+            Show-PhaseMessageHighlight -Message "No services found to generate test commands" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        }
+
+        $phase4Duration = (Get-Date) - $phase4Start
+        Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round($phase4Duration.TotalMilliseconds, 0))
+        #endregion
+
         #region Display Results and Completion
         # Calculate total execution time
         $totalElapsed = (Get-Date) - $scriptStartTime

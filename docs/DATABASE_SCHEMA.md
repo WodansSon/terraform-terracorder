@@ -32,6 +32,31 @@ TerraCorder operates in two distinct modes:
 - **Use Case**: First-time analysis, updating database with code changes
 - **Method**: Single-pass semantic analysis, no iterative resolution
 
+#### What Goes Into go_test_commands.txt
+
+The `go_test_commands.txt` file contains **ALL test functions** discovered through three discovery mechanisms:
+
+1. **Direct References** - Tests that explicitly use the resource in HCL code
+   - Example: `resource "azurerm_kubernetes_cluster" "test"`
+   - Source: DirectResourceReferences table
+   - Query: `-ShowDirectReferences`
+
+2. **Indirect References (Template Dependencies)** - Tests that call template functions which configure the resource
+   - Example: Test calls `r.complete()` → template creates the resource
+   - Source: IndirectConfigReferences table
+   - Query: `-ShowIndirectReferences` (shows both #2 and #3)
+
+3. **Sequential References** - Tests pulled in via `acceptance.RunTestsInSequence()` patterns
+   - Example: HDInsight Kafka test → pulls in HBase, Hadoop, Spark cluster tests
+   - Source: SequentialReferences table
+   - Query: `-ShowIndirectReferences` (shows both #2 and #3)
+
+**Important**:
+- **`-ShowIndirectReferences`** displays template dependencies (#2) + sequential references (#3)
+- **`-ShowDirectReferences`** displays direct resource usage (#1)
+- **Complete blast radius** = Direct + Indirect + Sequential (shown in `go_test_commands.txt`)
+- To see the **full impact**, you need to run BOTH `-ShowDirectReferences` AND `-ShowIndirectReferences`
+
 ### Database Mode (Query Operations)
 - **Purpose**: Fast querying of previously analyzed data
 - **Process**: Load CSV files into in-memory database, execute queries
