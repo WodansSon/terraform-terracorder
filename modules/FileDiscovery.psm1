@@ -109,7 +109,9 @@ function Get-TestFilesContainingResource {
                     $escapedResourceName = [regex]::Escape($ResourceName)
                     $precisePattern = "(?<!\w)$escapedResourceName(?!\w)"
 
-                    if ($content -cmatch $precisePattern) {
+                    # Explicitly capture -cmatch result to prevent boolean output to file descriptors
+                    $matchResult = ($content -cmatch $precisePattern)
+                    if ($matchResult) {
                         $results.RelevantFiles += $fileInfo.FullName
                     }
 

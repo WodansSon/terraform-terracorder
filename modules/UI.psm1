@@ -41,8 +41,9 @@ function Get-VSCodeSyntaxColors {
 
         # Special highlighting
         Highlight       = "#9CDCFE"  # Light blue - Emphasized elements (resource names, tree structure, keys)
-        HighlightAlt    = "#FF7F50"  # Coral - Alternative emphasis (sequential keys, special values)
         StringHighlight = "#d7a895"  # Lighter peachy-salmon - String highlighting for resource names
+        HighlightAlt    = "#FF7F50"  # Coral - Alternative emphasis (sequential keys, special values)
+        FindBackground  = "#623315"  # Dark brown - String highlighting for resource names (darker contrast)
 
         # UI colors
         LineNumber      = "#808080"  # Medium gray - Line numbers in output (visible in PowerShell console)
@@ -73,13 +74,19 @@ function Write-HostRGB {
         The text to display
 
     .PARAMETER HexColor
-        Hex color code (e.g., "#569CD6")
+        Hex color code for foreground (e.g., "#569CD6")
+
+    .PARAMETER BackgroundColor
+        Optional hex color code for background (e.g., "#623315")
 
     .PARAMETER NoNewline
         Suppress newline after output
 
     .EXAMPLE
         Write-HostRGB "resource" "#569CD6" -NoNewline
+
+    .EXAMPLE
+        Write-HostRGB "azurerm_subnet" "#CE9178" -BackgroundColor "#623315" -NoNewline
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -89,10 +96,13 @@ function Write-HostRGB {
         [string]$HexColor,
 
         [Parameter(Mandatory = $false)]
+        [string]$BackgroundColor = "",
+
+        [Parameter(Mandatory = $false)]
         [switch]$NoNewline
     )
 
-    # Convert hex to RGB
+    # Convert foreground hex to RGB
     $hex = $HexColor.TrimStart('#')
     $r = [Convert]::ToInt32($hex.Substring(0,2), 16)
     $g = [Convert]::ToInt32($hex.Substring(2,2), 16)
@@ -100,6 +110,16 @@ function Write-HostRGB {
 
     $esc = [char]27
     $colorCode = "$esc[38;2;${r};${g};${b}m"
+
+    # Add background color if provided
+    if ($BackgroundColor) {
+        $bgHex = $BackgroundColor.TrimStart('#')
+        $bgR = [Convert]::ToInt32($bgHex.Substring(0,2), 16)
+        $bgG = [Convert]::ToInt32($bgHex.Substring(2,2), 16)
+        $bgB = [Convert]::ToInt32($bgHex.Substring(4,2), 16)
+        $colorCode += "$esc[48;2;${bgR};${bgG};${bgB}m"
+    }
+
     $reset = "$esc[0m"
 
     if ($NoNewline) {

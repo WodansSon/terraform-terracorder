@@ -1,0 +1,1 @@
+AST_FILTERING_STRATEGY.md has been updated with the complete and verified filtering strategy

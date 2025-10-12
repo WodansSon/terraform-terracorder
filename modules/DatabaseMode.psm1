@@ -3,6 +3,17 @@
 # These functions provide deep analysis without re-running discovery phases
 
 # ============================================================================
+# MODULE CONSTANTS
+# ============================================================================
+$script:ARROW_CHAR = [char]0x2192  # Unicode Right Arrow Character
+
+# ============================================================================
+# MODULE STATE: Cache for loaded data tables
+# ============================================================================
+$script:allTemplateCalls = $null  # Cache for TemplateCalls.csv data
+$script:DatabaseDirectory = $null  # Store database directory for context
+
+# ============================================================================
 # PERFORMANCE OPTIMIZATION: Precompiled Regex Patterns
 # ============================================================================
 # These regex patterns are compiled once at module load time and reused across
@@ -31,6 +42,131 @@ $script:CompiledRegex = @{
 
     # Matches: one or more whitespace characters (for normalization)
     Whitespace = [regex]::new('\s+', [System.Text.RegularExpressions.RegexOptions]::Compiled)
+}
+
+# ============================================================================
+# HELPER FUNCTIONS: Call Chain Tracing
+# ============================================================================
+
+function Get-TemplateCalls {
+    <#
+    .SYNOPSIS
+    Load and cache TemplateCalls data from CSV for call chain analysis
+
+    .PARAMETER DatabaseDirectory
+    Directory containing TemplateCalls.csv
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DatabaseDirectory
+    )
+
+    # Return cached data if already loaded
+    if ($null -ne $script:allTemplateCalls) {
+        return $script:allTemplateCalls
+    }
+
+    $templateCallsPath = Join-Path $DatabaseDirectory "TemplateCalls.csv"
+    if (Test-Path $templateCallsPath) {
+        $script:allTemplateCalls = Import-Csv $templateCallsPath
+        return $script:allTemplateCalls
+    }
+
+    # Return empty array if file doesn't exist (older database)
+    $script:allTemplateCalls = @()
+    return $script:allTemplateCalls
+}
+
+function Get-CallChainDepth {
+    <#
+    .SYNOPSIS
+    Calculate the depth of nested calls from a template function
+
+    .PARAMETER TemplateFunctionRefId
+    The template function to analyze
+
+    .PARAMETER TemplateCalls
+    Array of TemplateCall records
+
+    .PARAMETER MaxDepth
+    Maximum depth to traverse (default: 5)
+
+    .RETURNS
+    Integer representing call chain depth (1 = no nested calls, 5 = deep nesting)
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$TemplateFunctionRefId,
+        [Parameter(Mandatory = $true)]
+        [array]$TemplateCalls,
+        [Parameter(Mandatory = $false)]
+        [int]$MaxDepth = 5
+    )
+
+    # Get calls made by this function
+    $callsMade = @($TemplateCalls | Where-Object {
+        [int]$_.CallerTemplateFunctionRefId -eq $TemplateFunctionRefId
+    })
+
+    if ($callsMade.Count -eq 0) {
+        return 0  # No nested calls
+    }
+
+    # If we've hit max depth, return current depth
+    if ($MaxDepth -le 1) {
+        return 1
+    }
+
+    # Recursively check depth of called functions
+    $maxChildDepth = 0
+    foreach ($call in $callsMade) {
+        # Only recurse for function calls, not struct instantiations
+        if ($call.CallType -eq 'function') {
+            # Find the called function by name (would need to enhance to track by RefId)
+            # For now, count this as 1 level
+            $maxChildDepth = [Math]::Max($maxChildDepth, 1)
+        }
+    }
+
+    return 1 + $maxChildDepth
+}
+
+function Get-NestedCallsInfo {
+    <#
+    .SYNOPSIS
+    Get information about nested calls for display
+
+    .PARAMETER TemplateFunctionRefId
+    The template function to analyze
+
+    .PARAMETER TemplateCalls
+    Array of TemplateCall records
+
+    .RETURNS
+    PSCustomObject with call information
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$TemplateFunctionRefId,
+        [Parameter(Mandatory = $true)]
+        [array]$TemplateCalls
+    )
+
+    # Get calls made by this function
+    $callsMade = @($TemplateCalls | Where-Object {
+        [int]$_.CallerTemplateFunctionRefId -eq $TemplateFunctionRefId
+    })
+
+    $functionCalls = @($callsMade | Where-Object { $_.CallType -eq 'function' })
+    $structCalls = @($callsMade | Where-Object { $_.CallType -eq 'struct' })
+
+    return [PSCustomObject]@{
+        TotalCalls = $callsMade.Count
+        FunctionCalls = $functionCalls.Count
+        StructCalls = $structCalls.Count
+        FunctionNames = ($functionCalls | Select-Object -ExpandProperty CalledName -Unique)
+        HasNestedCalls = ($callsMade.Count -gt 0)
+    }
 }
 
 function Show-DatabaseStatistics {
@@ -127,8 +263,8 @@ function Show-DirectReferences {
     }
 
     # Separate references by type for summary
-    $resourceRefs = $directRefs | Where-Object { $_.ReferenceTypeId -in @(5, 6) }  # RESOURCE_REFERENCE, DATA_SOURCE_REFERENCE
-    $attributeRefs = $directRefs | Where-Object { $_.ReferenceTypeId -eq 4 }        # ATTRIBUTE_REFERENCE
+    $resourceRefs = $directRefs | Where-Object { $_.ReferenceTypeId -eq 5 }  # RESOURCE_BLOCK
+    $attributeRefs = $directRefs | Where-Object { $_.ReferenceTypeId -eq 4 }  # ATTRIBUTE_REFERENCE
 
     # Display summary
     Write-Host "  Total References: " -ForegroundColor $InfoColor -NoNewline
@@ -137,9 +273,9 @@ function Show-DirectReferences {
     Write-Host ""
 
     if ($resourceRefs.Count -gt 0) {
-        Write-Host "  Direct Resource/Data Source References: " -ForegroundColor $InfoColor -NoNewline
+        Write-Host "  Resource Block References: " -ForegroundColor $InfoColor -NoNewline
         Write-Host "$($resourceRefs.Count) " -ForegroundColor $NumberColor -NoNewline
-        Write-Host "resource and data source declarations" -ForegroundColor $InfoColor
+        Write-Host "resource block declarations" -ForegroundColor $InfoColor
     }
 
     if ($attributeRefs.Count -gt 0) {
@@ -152,19 +288,65 @@ function Show-DirectReferences {
     Write-Separator
     Write-Host ""
 
-    # Group by file first, then display references within each file
-    $groupedByFile = $directRefs | Group-Object -Property FileRefId | Sort-Object { Get-FilePathByRefId -FileRefId $_.Name }
-    $totalFiles = $groupedByFile.Count
-    $currentFileIndex = 0
+    # Get template functions and create lookup hashtable for O(1) access
+    $templateFunctions = Get-TemplateFunctions
+    $templateFuncLookup = @{}
+    foreach ($tf in $templateFunctions) {
+        # Use integer key for fast lookup
+        $templateFuncLookup[[int]$tf.TemplateFunctionRefId] = $tf
+    }
 
+    # Get files and create lookup hashtable for O(1) access
+    $files = Get-Files
+    $fileLookup = @{}
+    foreach ($f in $files) {
+        # Use integer key for fast lookup
+        $fileLookup[[int]$f.FileRefId] = $f.FilePath
+    }
+
+    # Add calculated line numbers and file paths to references
+    $enrichedRefs = $directRefs | ForEach-Object {
+        $currentRef = $_
+
+        # Convert to int for hashtable lookup
+        $tfId = [int]$currentRef.TemplateFunctionRefId        # Safe hashtable lookup with null checks
+        if ($templateFuncLookup.ContainsKey($tfId)) {
+            $templateFunc = $templateFuncLookup[$tfId]
+            $fileId = [int]$templateFunc.FileRefId
+
+            if ($fileLookup.ContainsKey($fileId)) {
+                $filePath = $fileLookup[$fileId]
+                $actualLine = [int]$currentRef.TemplateLine + [int]$currentRef.ContextLine
+
+                [PSCustomObject]@{
+                    DirectRefId = $currentRef.DirectRefId
+                    TemplateFunctionRefId = $currentRef.TemplateFunctionRefId
+                    ResourceRefId = $currentRef.ResourceRefId
+                    ReferenceTypeId = $currentRef.ReferenceTypeId
+                    Context = $currentRef.Context
+                    TemplateLine = $currentRef.TemplateLine
+                    ContextLine = $currentRef.ContextLine
+                    ActualLine = $actualLine
+                    FilePath = $filePath
+                    TemplateFunction = $templateFunc.FunctionName
+                }
+            }
+        }
+    } | Where-Object { $_ -ne $null }
+
+    # Group by file first, then display references within each file
+    $groupedByFile = $enrichedRefs | Group-Object -Property FilePath | Sort-Object Name
+    $totalFiles = $groupedByFile.Count
+
+    $currentFileIndex = 0
     foreach ($fileGroup in $groupedByFile) {
         $currentFileIndex++
-        $filePath = Get-FilePathByRefId -FileRefId $fileGroup.Name
+        $filePath = $fileGroup.Name
         $fileRefCount = $fileGroup.Count
 
         # Separate references by type within this file
-        $resourceRefs = $fileGroup.Group | Where-Object { $_.ReferenceTypeId -in @(5, 6) }  # RESOURCE_REFERENCE, DATA_SOURCE_REFERENCE
-        $attributeRefs = $fileGroup.Group | Where-Object { $_.ReferenceTypeId -eq 4 }        # ATTRIBUTE_REFERENCE
+        $resourceRefs = $fileGroup.Group | Where-Object { $_.ReferenceTypeId -eq 5 }  # RESOURCE_BLOCK
+        $attributeRefs = $fileGroup.Group | Where-Object { $_.ReferenceTypeId -eq 4 }  # ATTRIBUTE_REFERENCE
 
         Write-Host " File: " -ForegroundColor $InfoColor -NoNewline
         Write-Host "./$filePath" -ForegroundColor $BaseColor
@@ -175,33 +357,32 @@ function Show-DirectReferences {
         if ($resourceRefs.Count -gt 0) {
             Write-Host ", " -ForegroundColor $BaseColor -NoNewline
             Write-Host "$($resourceRefs.Count) " -ForegroundColor $NumberColor -NoNewline
-            Write-Host "Direct References" -ForegroundColor $InfoColor -NoNewline
+            Write-Host "Resource Blocks" -ForegroundColor $InfoColor -NoNewline
         }
         if ($attributeRefs.Count -gt 0) {
             Write-Host ", " -ForegroundColor $BaseColor -NoNewline
             Write-Host "$($attributeRefs.Count) " -ForegroundColor $NumberColor -NoNewline
-            Write-Host "Attribute References" -ForegroundColor $InfoColor -NoNewline
+            Write-Host "Attributes" -ForegroundColor $InfoColor -NoNewline
         }
         Write-Host ""
         Write-Host ""
 
         # Calculate column widths for alignment
-        $maxLineNumWidth = ($fileGroup.Group | ForEach-Object { $_.LineNumber.ToString().Length } | Measure-Object -Maximum).Maximum
+        $maxLineNumWidth = ($fileGroup.Group | ForEach-Object { $_.ActualLine.ToString().Length } | Measure-Object -Maximum).Maximum
         $maxContextWidth = 100
 
         # Get syntax colors for highlighting
         $colors = Get-VSCodeSyntaxColors
 
-        # Display Direct Resource/Data Source References
+        # Display Resource Block References
         if ($resourceRefs.Count -gt 0) {
             Write-Separator -Indent 4
-            Write-Host "      Direct Resource References:" -ForegroundColor $InfoColor
+            Write-Host "      Resource Block References:" -ForegroundColor $InfoColor
             Write-Separator -Indent 4
 
-            foreach ($ref in $resourceRefs | Sort-Object LineNumber) {
-                $lineNumStr = $ref.LineNumber.ToString().PadLeft($maxLineNumWidth)
+            foreach ($ref in $resourceRefs | Sort-Object ActualLine) {
+                $lineNumStr = $ref.ActualLine.ToString().PadLeft($maxLineNumWidth)
 
-                # Write-HostRGB "      Reference: " $colors.Highlight -NoNewline
                 Write-Host "      " -NoNewline
                 $context = $ref.Context.Trim()
                 # Normalize whitespace: collapse multiple spaces to single space
@@ -210,18 +391,19 @@ function Show-DirectReferences {
                     $context = $context.Substring(0, $maxContextWidth - 3) + "..."
                 }
 
-                # Syntax highlighting: Highlight resource type in StringHighlight, rest in salmon (string color)
-                # Matches how format specifiers like %d, %s appear in Go sprintf blocks
+                # Syntax highlighting: Highlight resource type with background color (VS Code find style)
                 $match = $script:CompiledRegex.ResourceOrData.Match($context)
                 if ($match.Success) {
                     Write-HostRGB "${lineNumStr}" $colors.LineNumber -NoNewline
                     Write-HostRGB ": " $colors.Label -NoNewline
-                    Write-HostRGB "$($match.Groups[1].Value) " $colors.String -NoNewline          # Keyword - Salmon
-                    Write-HostRGB '"' $colors.String -NoNewline                                   # Opening quote - Salmon
-                    Write-HostRGB "$($match.Groups[2].Value)" $colors.StringHighlight -NoNewline  # Resource type - StringHighlight
-                    Write-HostRGB '"' $colors.String -NoNewline                                   # Closing quote - Salmon
-                    Write-HostRGB "$($match.Groups[3].Value)" $colors.String                      # Rest - Salmon
+                    Write-HostRGB "$($match.Groups[1].Value) " $colors.String -NoNewline          # Keyword
+                    Write-HostRGB '"' $colors.String -NoNewline                                   # Opening quote
+                    Write-HostRGB "$($match.Groups[2].Value)" $colors.String -BackgroundColor $colors.FindBackground -NoNewline  # Resource type with highlight background
+                    Write-HostRGB '"' $colors.String -NoNewline                                   # Closing quote
+                    Write-HostRGB "$($match.Groups[3].Value)" $colors.String                      # Rest
                 } else {
+                    Write-HostRGB "${lineNumStr}" $colors.LineNumber -NoNewline
+                    Write-HostRGB ": " $colors.Label -NoNewline
                     Write-Host "$context" -ForegroundColor $BaseColor
                 }
             }
@@ -232,11 +414,11 @@ function Show-DirectReferences {
         # Display Attribute References
         if ($attributeRefs.Count -gt 0) {
             Write-Separator -Indent 4
-            Write-Host "      Attribute Resource References:" -ForegroundColor $InfoColor
+            Write-Host "      Attribute References:" -ForegroundColor $InfoColor
             Write-Separator -Indent 4
 
-            foreach ($ref in $attributeRefs | Sort-Object LineNumber) {
-                $lineNumStr = $ref.LineNumber.ToString().PadLeft($maxLineNumWidth)
+            foreach ($ref in $attributeRefs | Sort-Object ActualLine) {
+                $lineNumStr = $ref.ActualLine.ToString().PadLeft($maxLineNumWidth)
 
                 Write-Host "      " -NoNewline
                 Write-HostRGB "${lineNumStr}" $colors.LineNumber -NoNewline
@@ -249,7 +431,7 @@ function Show-DirectReferences {
                     $context = $context.Substring(0, $maxContextWidth - 3) + "..."
                 }
 
-                # Syntax highlighting: Highlight resource type in StringHighlight, rest in salmon (string color)
+                # Syntax highlighting: Highlight resource type with background color (VS Code find style)
                 # Just look for azurerm_* anywhere in the line
                 $colors = Get-VSCodeSyntaxColors
                 $match = $script:CompiledRegex.AzureResourceName.Match($context)
@@ -258,7 +440,7 @@ function Show-DirectReferences {
                     if ($match.Groups[1].Value) {
                         Write-HostRGB $match.Groups[1].Value $colors.String -NoNewline       # Everything before resource name - Salmon
                     }
-                    Write-HostRGB $match.Groups[2].Value $colors.StringHighlight -NoNewline  # Resource name - StringHighlight
+                    Write-HostRGB $match.Groups[2].Value $colors.String -BackgroundColor $colors.FindBackground -NoNewline  # Resource name with highlight background
                     if ($match.Groups[3].Value) {
                         Write-HostRGB $match.Groups[3].Value $colors.String                  # Everything after resource name - Salmon
                     } else {
@@ -337,6 +519,7 @@ function Show-TemplateFunctionDependencies {
                 Steps = @()
                 ServiceImpactTypeName = $refInfo.ServiceImpactTypeName
                 ResourceOwningServiceName = $refInfo.ResourceOwningServiceName
+                SourceTemplateFunction = $refInfo.SourceTemplateFunction
             }
         }
         $functionGroups[$funcId].Steps += $refInfo
@@ -362,8 +545,8 @@ function Show-TemplateFunctionDependencies {
 
         # Show service context - only for cross-service references
         if ($executingServiceName -ne $funcGroup.ResourceOwningServiceName) {
-            # Cross-service - show which service is referencing this resource
-            Write-HostRGB "               Referenced From: " $colors.Highlight -NoNewline
+            # Cross-service - show which service this test belongs to
+            Write-HostRGB "               Service: " $colors.Highlight -NoNewline
             Write-HostRGB "$executingServiceName" $colors.Type
         }
 
@@ -381,6 +564,276 @@ function Show-TemplateFunctionDependencies {
             Write-HostRGB "$($stepInfo.TemplateRef.TemplateVariable)" $colors.Variable -NoNewline
             Write-HostRGB "." $colors.Label -NoNewline
             Write-HostRGB "$($stepInfo.TemplateRef.TemplateMethod)" $colors.Function
+
+            # For cross-service references, show complete dependency chain for each step
+            # Get the template function for THIS SPECIFIC STEP (not the function group's source)
+            $stepTemplateFunction = $null
+            $templateServiceName = $null
+
+            if ($stepInfo.TestFuncStep.StructRefId) {
+                # Look up the template function for this step's struct
+                if (-not $script:allTemplateFunctions) {
+                    $script:allTemplateFunctions = Get-TemplateFunctions
+                }
+
+                $stepTemplateFunction = $script:allTemplateFunctions | Where-Object {
+                    $_.StructRefId -eq $stepInfo.TestFuncStep.StructRefId
+                } | Select-Object -First 1
+
+                # Get the service name for the template function's file
+                if ($stepTemplateFunction) {
+                    if (-not $script:allFiles) {
+                        $script:allFiles = Get-Files
+                    }
+                    if (-not $script:allServices) {
+                        $script:allServices = Get-Services
+                    }
+
+                    $templateFile = $script:allFiles | Where-Object { $_.FileRefId -eq $stepTemplateFunction.FileRefId } | Select-Object -First 1
+                    if ($templateFile) {
+                        $templateService = $script:allServices | Where-Object { $_.ServiceRefId -eq $templateFile.ServiceRefId } | Select-Object -First 1
+                        if ($templateService) {
+                            $templateServiceName = $templateService.Name
+                        }
+                    }
+                }
+            }
+
+            # Only show cross-service data if the template function is in a DIFFERENT service than the test
+            if ($stepTemplateFunction -and $templateServiceName -and $executingServiceName -ne $templateServiceName) {
+
+                # Get direct resource references from the template function file
+                if (-not $script:allDirectResourceReferences) {
+                    $script:allDirectResourceReferences = Get-DirectResourceReferences
+                }
+
+                # Load Resources, Structs, and TemplateFunctions tables if needed
+                if (-not $script:allResources) {
+                    $script:allResources = Get-Resources
+                }
+                if (-not $script:allStructs) {
+                    $script:allStructs = Get-Structs
+                }
+                if (-not $script:allTemplateFunctions) {
+                    $script:allTemplateFunctions = Get-TemplateFunctions
+                }
+                if (-not $script:allFiles) {
+                    $script:allFiles = Get-Files
+                }
+                if (-not $script:allServices) {
+                    $script:allServices = Get-Services
+                }
+
+                # Build hashtable indexes for O(1) lookups (only once per function call)
+                if (-not $script:structsByRefId) {
+                    $script:structsByRefId = @{}
+                    foreach ($struct in $script:allStructs) {
+                        $script:structsByRefId[$struct.StructRefId] = $struct
+                    }
+                }
+                if (-not $script:filesByRefId) {
+                    $script:filesByRefId = @{}
+                    foreach ($file in $script:allFiles) {
+                        $script:filesByRefId[$file.FileRefId] = $file
+                    }
+                }
+                if (-not $script:servicesByRefId) {
+                    $script:servicesByRefId = @{}
+                    foreach ($service in $script:allServices) {
+                        $script:servicesByRefId[$service.ServiceRefId] = $service
+                    }
+                }
+                if (-not $script:templateFunctionsByStructRefId) {
+                    $script:templateFunctionsByStructRefId = @{}
+                    foreach ($func in $script:allTemplateFunctions) {
+                        if (-not $script:templateFunctionsByStructRefId.ContainsKey($func.StructRefId)) {
+                            $script:templateFunctionsByStructRefId[$func.StructRefId] = @()
+                        }
+                        $script:templateFunctionsByStructRefId[$func.StructRefId] += $func
+                    }
+                }
+                if (-not $script:structsByResourceRefId) {
+                    $script:structsByResourceRefId = @{}
+                    foreach ($struct in $script:allStructs) {
+                        if (-not $script:structsByResourceRefId.ContainsKey($struct.ResourceRefId)) {
+                            $script:structsByResourceRefId[$struct.ResourceRefId] = @()
+                        }
+                        $script:structsByResourceRefId[$struct.ResourceRefId] += $struct
+                    }
+                }
+                if (-not $script:resourcesByName) {
+                    $script:resourcesByName = @{}
+                    foreach ($resource in $script:allResources) {
+                        $script:resourcesByName[$resource.ResourceName] = $resource
+                    }
+                }
+
+                # Load TemplateCalls for call chain depth analysis
+                if ($null -eq $script:allTemplateCalls) {
+                    $dbDir = Get-ExportDirectory
+                    if (-not $dbDir) {
+                        # Fallback: try to determine database directory from current context
+                        # This should be set by the calling context
+                        $dbDir = $script:DatabaseDirectory
+                    }
+                    if ($dbDir) {
+                        $templateCallsPath = Join-Path $dbDir "TemplateCalls.csv"
+                        if (Test-Path $templateCallsPath) {
+                            $script:allTemplateCalls = Import-Csv $templateCallsPath
+                        } else {
+                            $script:allTemplateCalls = @()
+                        }
+                    } else {
+                        $script:allTemplateCalls = @()
+                    }
+                }
+
+                # Get the struct that owns the source template function (the template being called)
+                # Use hashtable lookup instead of Where-Object for O(1) performance
+                $calledTemplateStruct = $script:structsByRefId[$stepTemplateFunction.StructRefId]
+
+                # Get call depth info for this template function
+                $callInfo = Get-NestedCallsInfo `
+                    -TemplateFunctionRefId $stepTemplateFunction.TemplateFunctionRefId `
+                    -TemplateCalls $script:allTemplateCalls
+
+                $depthIndicator = ""
+                if ($callInfo.HasNestedCalls) {
+                    if ($callInfo.FunctionCalls -gt 0) {
+                        $depthIndicator = " [+$($callInfo.FunctionCalls) deeper]"
+                    }
+                }
+
+                # Define box-drawing characters (matching sequential test style)
+                $tee = [char]0x251C       # (branch continues)
+                $corner = [char]0x2514    # (last branch)
+                $arrow = [char]0x2500     # (horizontal line)
+                $rarrow = [char]0x25BA    # (right-pointing arrow)
+
+                # Second level: Get resource references to determine how many items we'll display
+                # IMPORTANT: Only show functions that reference the specific resource we're analyzing
+                $sourceFileRefId = $stepTemplateFunction.FileRefId
+                $directRefs = $script:allDirectResourceReferences | Where-Object {
+                    $_.FileRefId -eq $sourceFileRefId
+                } | Select-Object -First 10  # Get more for complete picture
+
+                # Get the specific resource we're analyzing (via ResourceOwningServiceRefId)
+                $targetResourceRefId = $null
+                if ($stepTemplateFunction) {
+                    # Use hashtable lookup for O(1) performance
+                    $sourceStruct = $script:structsByRefId[$stepTemplateFunction.StructRefId]
+
+                    if ($sourceStruct) {
+                        $targetResourceRefId = $sourceStruct.ResourceRefId
+                    }
+                }
+
+                # Map structs to their template functions (FILTERED by target resource only)
+                # OPTIMIZED: Build struct info once for the target resource using hashtable lookups
+                $structToFunctions = @{}
+
+                if ($targetResourceRefId) {
+                    # Get all structs for the target resource using O(1) hashtable lookup
+                    $structs = $script:structsByResourceRefId[$targetResourceRefId]
+
+                    if ($structs) {
+                        # Process each struct once (no nested loops)
+                        foreach ($struct in $structs) {
+                            # Get template function for this struct - O(1) lookup
+                            $templateFuncs = $script:templateFunctionsByStructRefId[$struct.StructRefId]
+                            $templateFunc = if ($templateFuncs) { $templateFuncs[0] } else { $null }
+
+                            if ($templateFunc) {
+                                # Get file and service info - O(1) lookups
+                                $file = $script:filesByRefId[$templateFunc.FileRefId]
+                                $serviceName = ""
+                                if ($file) {
+                                    $service = $script:servicesByRefId[$file.ServiceRefId]
+                                    if ($service) {
+                                        $serviceName = $service.Name
+                                    }
+                                }
+
+                                # Get call depth for level 2 function
+                                $level2CallInfo = Get-NestedCallsInfo `
+                                    -TemplateFunctionRefId $templateFunc.TemplateFunctionRefId `
+                                    -TemplateCalls $script:allTemplateCalls
+
+                                $structToFunctions[$struct.StructName] = @{
+                                    FunctionName = $templateFunc.TemplateFunctionName
+                                    Line = $templateFunc.Line
+                                    TemplateFunctionRefId = $templateFunc.TemplateFunctionRefId
+                                    CallInfo = $level2CallInfo
+                                    ServiceName = $serviceName
+                                }
+                            }
+                        }
+                    }
+                }
+
+                # Determine if we need to show Level 2 (resource references)
+                $hasLevel2 = $structToFunctions.Count -gt 0
+
+                # First level: Show the template function being called (Level 1)
+                # Use tee-down (┬) if there are Level 2 items, otherwise use corner (└)
+                $level1Char = if ($hasLevel2) { [char]0x252C } else { $corner }  # ┬ or └
+
+                Write-HostRGB "                 $corner$level1Char$arrow$rarrow " $colors.Highlight -NoNewline
+                Write-HostRGB "Caller: " $colors.BracketLevel1 -NoNewline
+                Write-HostRGB "$($stepTemplateFunction.Line)" $colors.LineNumber -NoNewline
+                Write-HostRGB ": " $colors.Label -NoNewline
+                Write-HostRGB "$($stepTemplateFunction.TemplateFunctionName)" $colors.Function
+
+                # Display the functions that actually use the resource (Level 2 - indented)
+                if ($hasLevel2) {
+                    # Check if any functions have deeper call chains
+                    $hasDeepChains = $false
+
+                    $structNames = $structToFunctions.Keys | Sort-Object | Select-Object -First 5
+                    $level2Count = $structNames.Count
+                    $level2Index = 0
+
+                    foreach ($structName in $structNames) {
+                        $level2Index++
+                        $isLastLevel2 = ($level2Index -eq $level2Count)
+                        $level2BranchChar = if ($isLastLevel2) { $corner } else { $tee }
+
+                        $funcInfo = $structToFunctions[$structName]
+
+                        # Check if this function has nested calls
+                        if ($funcInfo.CallInfo.HasNestedCalls) {
+                            $hasDeepChains = $true
+                        }
+
+                        # Indent Level 2 under Level 1 - align with the vertical line from └┬►
+                        Write-HostRGB "                  $level2BranchChar$arrow$rarrow " $colors.Highlight -NoNewline
+                        Write-HostRGB "References" $colors.Highlight -NoNewline
+                        Write-HostRGB ": " $colors.Label -NoNewline
+
+                        # Show service name if available (and not empty)
+                        if ($funcInfo.ServiceName -and $funcInfo.ServiceName -ne "") {
+                            Write-HostRGB "$($funcInfo.ServiceName)" $colors.ControlFlow -NoNewline
+                            Write-HostRGB ":" $colors.Label -NoNewline
+                        }
+
+                        Write-HostRGB "$structName" $colors.Type -NoNewline
+                        Write-HostRGB ": " $colors.Label -NoNewline
+                        Write-HostRGB "$($funcInfo.Line)" $colors.LineNumber -NoNewline
+                        Write-HostRGB ": " $colors.Label -NoNewline
+                        Write-HostRGB "$($funcInfo.FunctionName)" $colors.Function
+                    }
+                }
+
+                # Add navigation hint if any functions have deeper call chains
+                if ($hasDeepChains) {
+                    Write-Host ""
+                    Write-HostRGB "                 " $colors.Label -NoNewline
+                    Write-HostRGB "Note: " $colors.Comment -NoNewline
+                    Write-HostRGB "Call chains continue deeper. See " $colors.Comment -NoNewline
+                    Write-HostRGB "$($funcGroup.TestFunc.FunctionName)" $colors.Function -NoNewline
+                    Write-HostRGB " to trace test function call paths.`n" $colors.Comment
+                }
+            }
         }
     }
 }
@@ -597,6 +1050,9 @@ function Show-IndirectReferences {
     .SYNOPSIS
     Display all indirect/template-based references from the database
 
+    .PARAMETER DatabaseDirectory
+    Directory containing the database CSV files (for loading TemplateCalls)
+
     .PARAMETER NumberColor
     Color for numbers in output
 
@@ -611,6 +1067,9 @@ function Show-IndirectReferences {
     #>
     param(
         [Parameter(Mandatory = $false)]
+        [string]$DatabaseDirectory = "",
+
+        [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Yellow",
 
         [Parameter(Mandatory = $false)]
@@ -622,6 +1081,11 @@ function Show-IndirectReferences {
         [Parameter(Mandatory = $false)]
         [string]$InfoColor = "Cyan"
     )
+
+    # Store database directory for use in helper functions
+    if ($DatabaseDirectory) {
+        $script:DatabaseDirectory = $DatabaseDirectory
+    }
 
     Write-Host ""
     Write-Separator
@@ -699,8 +1163,8 @@ function Show-IndirectReferences {
     # Pre-build test function steps lookup for O(1) access
     $testFuncStepLookup = @{}
     foreach ($step in Get-AllTestFunctionSteps) {
-        if (-not $testFuncStepLookup.ContainsKey($step.TestFunctionStepRefId)) {
-            $testFuncStepLookup[$step.TestFunctionStepRefId] = $step
+        if (-not $testFuncStepLookup.ContainsKey($step.TestStepRefId)) {
+            $testFuncStepLookup[$step.TestStepRefId] = $step
         }
     }
 
@@ -743,6 +1207,18 @@ function Show-IndirectReferences {
             $resourceOwningServiceName = $services | Where-Object { $_.ServiceRefId -eq $indirectRef.ResourceOwningServiceRefId } | Select-Object -First 1 -ExpandProperty Name
         }
 
+        # Get the source template function that contains the resource reference (for cross-service chain)
+        $sourceTemplateFunction = $null
+        if ($indirectRef.PSObject.Properties['SourceTemplateFunctionRefId'] -and $indirectRef.SourceTemplateFunctionRefId) {
+            # Get all template functions if not cached
+            if (-not $script:allTemplateFunctions) {
+                $script:allTemplateFunctions = Get-TemplateFunctions
+            }
+            $sourceTemplateFunction = $script:allTemplateFunctions | Where-Object {
+                $_.TemplateFunctionRefId -eq $indirectRef.SourceTemplateFunctionRefId
+            } | Select-Object -First 1
+        }
+
         # Group by file
         $fileRefId = $testFunc.FileRefId
         if (-not $fileGroups.ContainsKey($fileRefId)) {
@@ -756,6 +1232,7 @@ function Show-IndirectReferences {
             RefTypeName               = $refTypeName
             ServiceImpactTypeName     = $serviceImpactTypeName
             ResourceOwningServiceName = $resourceOwningServiceName
+            SourceTemplateFunction    = $sourceTemplateFunction
         }
     }
 
