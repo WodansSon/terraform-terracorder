@@ -251,6 +251,46 @@ try {
         # Run AST analyzer in parallel and import to database
         Import-ASTOutput -ASTAnalyzerPath $astAnalyzerPath -TestFiles $testFiles -RepoRoot $RepositoryDirectory -ResourceName $ResourceName
 
+        # Phase 2.5: Discover Additional Sequential Test Files
+        # After initial import, find files with RunTestsInSequence that reference functions we just imported
+        Show-PhaseMessageHighlight -Message "Scanning for additional sequential test entry points..." -HighlightText "sequential" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+        # Get all test function names from the database - direct property access without looping
+        # Don't filter by naming convention - developers can name sequential functions anything!
+        $resourceFunctionNames = (Get-TestFunctions).FunctionName
+
+        if ($resourceFunctionNames.Count -gt 0) {
+            # Get all test files in the repository to search
+            $allTestFiles = Get-ChildItem -Path (Join-Path $RepositoryDirectory "internal\services") -Recurse -Filter "*_test.go" | Select-Object -ExpandProperty FullName
+            Show-PhaseMessageHighlight -Message "Searching $($allTestFiles.Count) test files for sequential patterns..." -HighlightText "$($allTestFiles.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+            # Find additional files that have sequential patterns referencing our functions
+            $additionalResult = Get-AdditionalSequentialFiles `
+                -RepositoryDirectory $RepositoryDirectory `
+                -CandidateFileNames $allTestFiles `
+                -ResourceFunctions $resourceFunctionNames `
+                -FileContents @{}
+
+            $additionalFiles = $additionalResult.AdditionalFiles
+
+            if ($additionalFiles.Count -gt 0) {
+                # Filter out files that were already processed in Phase 2 (prevent duplicates!)
+                $additionalFilePaths = $additionalFiles | Select-Object -ExpandProperty FullName
+                $newFilePaths = $additionalFilePaths | Where-Object { $_ -notin $testFiles }
+
+                if ($newFilePaths.Count -gt 0) {
+                    Show-PhaseMessageHighlight -Message "Found $($newFilePaths.Count) additional sequential test files" -HighlightText "$($newFilePaths.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+                    # Import only the NEW files (deduplicated)
+                    Import-ASTOutput -ASTAnalyzerPath $astAnalyzerPath -TestFiles $newFilePaths -RepoRoot $RepositoryDirectory -ResourceName $ResourceName
+                } else {
+                    Show-PhaseMessageHighlight -Message "All sequential test files were already processed" -HighlightText "All" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                }
+            } else {
+                Show-PhaseMessageHighlight -Message "No additional sequential test files found" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            }
+        }
+
         # Show database statistics
         $stats = Get-DatabaseStats
         $serviceCount = $stats.Services
@@ -288,8 +328,6 @@ try {
         $totalMs = [math]::Round($totalElapsed.TotalMilliseconds, 0)
         $totalSeconds = [math]::Round($totalElapsed.TotalSeconds, 1)
         Write-Host "Total Execution Time: $totalMs ms ($totalSeconds seconds)" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "AST-based analysis complete! Database exported to CSV files." -ForegroundColor Green
         Write-Host ""
         #endregion
         #endregion DISCOVERY MODE

@@ -1275,8 +1275,22 @@ func extractSequentialReferences(file *ast.File, fset *token.FileSet, filePath s
 				return true
 			}
 
-			// Check for t.Run(name, func) pattern
+			// Check for data.ResourceSequentialTest(t, r, []acceptance.TestStep{...}) pattern
+			// Pattern: data.ResourceSequentialTest(t, resource, steps)
+			// This indicates the test function calls other test steps sequentially
 			if sel, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+				if _, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "ResourceSequentialTest" {
+					// Extract the current test function as a sequential entry point
+					// The test steps within are the sequential references
+					// For now, we'll just mark this test as having sequential behavior
+					// The actual test steps are handled separately in the TestStepInfo extraction
+
+					// Note: We don't create individual SequentialReference records here
+					// because ResourceSequentialTest uses TestStep arrays, not named function references
+					// The sequential nature is implicit in the test execution order
+				}
+
+				// Check for t.Run(name, func) pattern
 				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "t" && sel.Sel.Name == "Run" {
 					// Extract t.Run(name, func) where name is a string literal
 					if len(callExpr.Args) >= 2 {

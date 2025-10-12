@@ -331,16 +331,37 @@ function Get-AdditionalSequentialFiles {
     if ($additionalSequentialFiles.Count -eq 0) {
         # Use grep-like search to quickly find files containing RunTestsInSequence
         $testDirectory = Join-Path $RepositoryDirectory "internal\services"
-        $sequentialTestFiles = Get-ChildItem -Path $testDirectory -Recurse -Filter "*_test.go" |
+
+        # Get candidate files first
+        $candidateFiles = Get-ChildItem -Path $testDirectory -Recurse -Filter "*_test.go" |
             Where-Object {
                 $_.FullName -notlike "*validate*" -and
                 -not $FileContents.ContainsKey($_.FullName)
-            } |
-            ForEach-Object {
-                # Quick check: does this file contain RunTestsInSequence at all?
-                $quickContent = Select-String -Path $_.FullName -Pattern "RunTestsInSequence" -Quiet
-                if ($quickContent) { $_ }
             }
+
+        $totalCandidates = $candidateFiles.Count
+        $currentFile = 0
+        $sequentialTestFiles = @()
+
+        foreach ($file in $candidateFiles) {
+            $currentFile++
+
+            # Show progress every 100 files
+            if ($currentFile % 100 -eq 0 -or $currentFile -eq $totalCandidates) {
+                Show-InlineProgress -Current $currentFile -Total $totalCandidates -Activity "Scanning test files"
+            }
+
+            # Quick check: does this file contain RunTestsInSequence at all?
+            $quickContent = Select-String -Path $file.FullName -Pattern "RunTestsInSequence" -Quiet
+            if ($quickContent) {
+                $sequentialTestFiles += $file
+            }
+        }
+
+        # Show completion
+        if ($totalCandidates -gt 0) {
+            Show-InlineProgress -Current $totalCandidates -Total $totalCandidates -Activity "Scanning test files" -Completed
+        }
 
         foreach ($file in $sequentialTestFiles) {
             $content = Get-Content $file.FullName -Raw

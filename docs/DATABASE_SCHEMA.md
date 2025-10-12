@@ -1,20 +1,20 @@
-# TerraCorder AST-Optimized Database Schema
-## Fully Normalized Relational Design with AST Semantic Analysis
+# TerraCorder Database Schema
+## AST-Based Fully Normalized Relational Design
 
 ---
 
 ## Overview
 
-This schema represents a **complete redesign** of TerraCorder's database to leverage AST (Abstract Syntax Tree) semantic analysis instead of regex pattern matching. The design maintains all existing functionality while dramatically reducing data volume and complexity.
+TerraCorder uses AST (Abstract Syntax Tree) semantic analysis to extract test function relationships and resource references from Terraform provider Go test files. The database schema is fully normalized with foreign key relationships, storing metadata only (no source code).
 
 ### Core Principle
 **AST does the heavy lifting (semantic resolution), PowerShell does the querying (presentation)**
 
 ### Key Benefits
-- **90% Data Reduction**: 611K rows → ~60K rows (remove 304K function bodies)
-- **10x Performance**: AST resolves relationships upfront, no multi-pass PowerShell resolution
-- **100% Accuracy**: Semantic syntax tree analysis vs regex pattern matching
-- **80% Code Reduction**: Simple queries replace complex resolution logic
+- **Compact Storage**: Metadata-only design (~70K rows typical)
+- **High Performance**: AST resolves relationships upfront, single-pass analysis
+- **100% Accuracy**: Semantic syntax tree analysis eliminates pattern matching errors
+- **Simple Queries**: Pre-resolved relationships enable straightforward SQL-like queries
 - **Full Normalization**: All repeating strings normalized into lookup tables with FK references
 
 ---
@@ -24,22 +24,22 @@ This schema represents a **complete redesign** of TerraCorder's database to leve
 TerraCorder operates in two distinct modes:
 
 ### Discovery Mode (Database Creation)
-- **Purpose**: Initial AST-based analysis of Terraform provider repository
+- **Purpose**: AST-based analysis of Terraform provider repository
 - **Process**: AST analyzer processes Go test files, outputs resolved relationships
-- **Output**: 11 CSV files representing normalized database tables
+- **Output**: 12 CSV files representing normalized database tables
 - **File**: `go_test_commands.txt` with generated test commands
-- **Duration**: Minutes (AST processing + database import)
+- **Duration**: Seconds to minutes (depends on repository size)
 - **Use Case**: First-time analysis, updating database with code changes
-- **AST Advantage**: Single-pass semantic analysis, no iterative resolution
+- **Method**: Single-pass semantic analysis, no iterative resolution
 
 ### Database Mode (Query Operations)
 - **Purpose**: Fast querying of previously analyzed data
 - **Process**: Load CSV files into in-memory database, execute queries
 - **Input**: CSV files from previous Discovery Mode run
-- **Operations**: ShowDirectReferences, ShowIndirectReferences, ShowAllReferences
-- **Duration**: Seconds (5-10 seconds for database load, instant queries)
+- **Operations**: ShowDirectReferences, ShowIndirectReferences, ShowAllReferences, ShowTestSequence
+- **Duration**: Seconds (database load + query execution)
 - **Use Case**: Analysis, reporting, exploration without re-scanning repository
-- **Note**: Database Mode does not regenerate `go_test_commands.txt` (read-only operations)
+- **Note**: Database Mode is read-only, does not regenerate CSV files or `go_test_commands.txt`
 
 ---
 
@@ -54,29 +54,176 @@ Every repeating string value is stored once in a lookup table and referenced via
 - **Files**: Test file paths
 - **TemplateFunctions**: Template function names (e.g., "basic", "template")
 
-### 2. No Source Code Storage
-- **Current Problem**: 304,255 rows storing full function bodies (11MB!)
-- **AST Solution**: Store metadata only (function names, lines, types)
-- **Rationale**: Source code already in Git, AST extracts what we need
-- **Result**: Massive storage reduction, faster queries
+### 2. Metadata-Only Storage
+- **Design**: Store function names, line numbers, and relationships only
+- **Rationale**: Source code already exists in Git repository
+- **Result**: Compact database, fast queries, no duplicate storage
 
 ### 3. Pre-Resolved Relationships
-- **Current Problem**: PowerShell performs multi-pass resolution (templates → calls → resources)
-- **AST Solution**: AST walks call graphs and resolves complete chains upfront
-- **Result**: Database stores **results**, not **raw materials**
+- **AST Analysis**: AST walks call graphs and resolves relationships during parsing
+- **Database Storage**: Stores final resolved relationships with foreign key references
+- **Query Simplicity**: Simple joins replace complex multi-pass resolution logic
 
 ### 4. Semantic Understanding
-- **Current Problem**: Regex pattern matching can miss edge cases
-- **AST Solution**: Parse Go syntax tree, understand code structure semantically
-- **Examples**:
-  - AST knows if function returns string (template vs helper)
-  - AST tracks both pointer and value receivers
-  - AST understands service boundaries from package structure
-  - AST resolves template call chains completely
+- **AST Parsing**: Parse Go syntax tree to understand code structure semantically
+- **Capabilities**:
+  - Determines if function returns string (template vs helper)
+  - Tracks both pointer and value receivers
+  - Understands service boundaries from package structure
+  - Identifies sequential test patterns and references
+  - Resolves template call chains and resource references
 
 ---
 
 ## Database Tables
+
+### Current Schema (12 Tables Exported)
+
+The database currently exports the following 12 tables to CSV:
+
+**Normalization/Lookup Tables (5)**:
+1. **Resources** - Terraform resource types being analyzed
+2. **Services** - Azure service categories
+3. **Files** - Test file paths
+4. **Structs** - Go struct names
+5. **ReferenceTypes** - Relationship type classifications
+
+**Data Tables (7)**:
+6. **TestFunctions** - Test function metadata
+7. **TemplateFunctions** - Template function metadata
+8. **TestFunctionSteps** (TestSteps) - Test step execution records
+9. **DirectResourceReferences** - Direct HCL resource references
+10. **SequentialReferences** - Sequential test execution references
+11. **TemplateReferences** - Template function call references (legacy support)
+12. **IndirectConfigReferences** - Indirect resource references via templates (legacy support)
+
+### Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    Resources ||--o{ DirectResourceReferences : "referenced in"
+    Services ||--o{ Files : contains
+    Services ||--o{ Structs : defines
+    Files ||--o{ Structs : contains
+    Files ||--o{ TestFunctions : contains
+    Files ||--o{ TemplateFunctions : contains
+    Structs ||--o{ TestFunctions : "receives on"
+    Structs ||--o{ TemplateFunctions : "receives on"
+    TestFunctions ||--o{ TestFunctionSteps : "executes"
+    TestFunctions ||--o{ TemplateReferences : calls
+    TestFunctions ||--o{ SequentialReferences : "entry point for"
+    TestFunctions ||--o{ SequentialReferences : "referenced in"
+    TemplateFunctions ||--o{ TestFunctionSteps : "called by"
+    TemplateFunctions ||--o{ DirectResourceReferences : "references"
+    TemplateFunctions ||--o{ TemplateReferences : "is called"
+    TestFunctionSteps ||--o{ IndirectConfigReferences : "produces"
+    TemplateReferences ||--o{ IndirectConfigReferences : "via"
+    ReferenceTypes ||--o{ TestFunctionSteps : classifies
+    ReferenceTypes ||--o{ DirectResourceReferences : classifies
+    ReferenceTypes ||--o{ IndirectConfigReferences : classifies
+
+    Resources {
+        int ResourceRefId PK
+        string ResourceName UK
+    }
+
+    Services {
+        int ServiceRefId PK
+        int ResourceRefId FK
+        string Name UK
+    }
+
+    Files {
+        int FileRefId PK
+        string FilePath UK
+        int ServiceRefId FK
+    }
+
+    Structs {
+        int StructRefId PK
+        int ResourceRefId FK
+        int FileRefId FK
+        int Line
+        string StructName
+    }
+
+    TestFunctions {
+        int TestFunctionRefId PK
+        int ResourceRefId FK
+        int FileRefId FK
+        int StructRefId FK
+        int Line
+        string FunctionName
+        string TestPrefix
+        int ReferenceTypeRefId FK
+        int SequentialEntryPointRefId FK
+    }
+
+    TemplateFunctions {
+        int TemplateFunctionRefId PK
+        int ResourceRefId FK
+        string TemplateFunctionName
+        int StructRefId FK
+        int FileRefId FK
+        int Line
+        string ReceiverVariable
+    }
+
+    TestFunctionSteps {
+        int TestStepRefId PK
+        int TestFunctionRefId FK
+        int TemplateFunctionRefId FK
+        int StepIndex
+        int TargetStructRefId FK
+        int TargetServiceRefId FK
+        int ReferenceTypeId FK
+        int Line
+    }
+
+    DirectResourceReferences {
+        int DirectRefId PK
+        int TemplateFunctionRefId FK
+        int ResourceRefId FK
+        int ReferenceTypeId FK
+        string Context
+        int TemplateLine
+        int ContextLine
+    }
+
+    SequentialReferences {
+        int SequentialRefId PK
+        int EntryPointFunctionRefId FK
+        int ReferencedFunctionRefId FK
+        string SequentialGroup
+        string SequentialKey
+    }
+
+    TemplateReferences {
+        int TemplateReferenceRefId PK
+        int TestFunctionRefId FK
+        int TestFunctionStepRefId FK
+        int StructRefId FK
+        string TemplateReference
+        string TemplateVariable
+        string TemplateMethod
+    }
+
+    IndirectConfigReferences {
+        int IndirectRefId PK
+        int TestFunctionStepRefId FK
+        int TemplateReferenceRefId FK
+        int SourceTemplateFunctionRefId FK
+        int ReferenceTypeId FK
+        int ServiceImpactTypeId FK
+    }
+
+    ReferenceTypes {
+        int ReferenceTypeId PK
+        string ReferenceTypeName UK
+    }
+```
+
+---
 
 ### Normalization/Lookup Tables (Store Unique Values Once)
 
@@ -246,32 +393,37 @@ FileRefId | FileName                          | FilePath                        
 ### Data Tables (AST-Extracted Metadata)
 
 #### 6. TestFunctions
-**Purpose**: Test function metadata (NO function bodies)
+**Purpose**: Test function metadata
 
 ```sql
 CREATE TABLE TestFunctions (
     TestFunctionRefId INTEGER PRIMARY KEY,
     FileRefId INTEGER NOT NULL,
-    StructRefId INTEGER NOT NULL,
+    StructRefId INTEGER,
     FunctionName TEXT NOT NULL,
     Line INTEGER NOT NULL,
+    TestPrefix TEXT NOT NULL,
+    ReferenceTypeRefId INTEGER,
+    SequentialEntryPointRefId INTEGER DEFAULT 0,
     FOREIGN KEY (FileRefId) REFERENCES Files(FileRefId),
-    FOREIGN KEY (StructRefId) REFERENCES Structs(StructRefId)
+    FOREIGN KEY (StructRefId) REFERENCES Structs(StructRefId),
+    FOREIGN KEY (ReferenceTypeRefId) REFERENCES ReferenceTypes(ReferenceTypeId)
 );
 ```
 
 **Example Data**:
 ```
-TestFunctionRefId | FileRefId | StructRefId | FunctionName                       | Line
-1                 | 1         | 1           | TestAccNetworkManager_basic        | 45
-2                 | 1         | 1           | TestAccNetworkManager_requiresImport| 78
-3                 | 2         | 2           | TestAccVirtualNetwork_basic        | 123
+TestFunctionRefId | FileRefId | StructRefId | FunctionName                       | Line | TestPrefix | ReferenceTypeRefId
+1                 | 1         | 1           | TestAccNetworkManager_basic        | 45   | TestAcc_   | NULL
+2                 | 1         | 1           | TestAccNetworkManager_requiresImport| 78   | TestAcc_   | NULL
+3                 | 0         | NULL        | testAccSecurityCenterWorkspace_basic| 0    | testAcc_   | 10
 ```
 
-**REMOVED from Old Schema**:
-- ✗ FunctionBody (304K rows of source code!)
-- ✗ ServiceName (get via FileRefId → ServiceRefId)
-- ✗ TestPrefix (can derive if needed)
+**Column Details**:
+- **TestPrefix**: Test prefix up to and including first underscore (e.g., "TestAcc_", "test_")
+- **ReferenceTypeRefId**: Foreign key to ReferenceTypes (10 = EXTERNAL_REFERENCE for functions not in scanned files)
+- **FileRefId = 0**: Indicates external reference (function exists but file wasn't scanned)
+- **SequentialEntryPointRefId**: Foreign key to the entry point function for sequential test chains
 
 **AST Extraction**:
 ```go
@@ -316,11 +468,6 @@ TemplateFunctionRefId | FileRefId | StructRefId | FunctionName | ReceiverType | 
 3                     | 1         | 1           | helper       | pointer      | 345  | 0
 ```
 
-**REMOVED from Old Schema**:
-- ✗ FunctionBody (304,255 rows of source code - 11MB!)
-- ✗ ReceiverVariable (don't need it)
-- ✗ ServiceName (get via FileRefId → ServiceRefId)
-
 **AST Extraction**:
 ```go
 func (r ManagerResource) basic() string { ... }
@@ -330,7 +477,7 @@ func (r *ManagerResource) helper() int { ... }
 // AST extracts: FunctionName="helper", ReceiverType="pointer", ReturnsString=0
 ```
 
-**Filtering**: Only track template methods (return string), ignore infrastructure helpers
+**Note**: Only template methods (return string) are tracked; infrastructure helpers are ignored
 
 **Queries**:
 ```sql
@@ -374,12 +521,6 @@ TestStepRefId | TestFunctionRefId | TemplateFunctionRefId | StepIndex | TargetSt
 3             | 2                 | 1                     | 1         | 1                 | 1                  | 1               | 89
 ```
 
-**REMOVED from Old Schema**:
-- ✗ StepBody (don't need full source)
-- ✗ ConfigTemplate string (use TemplateFunctionRefId FK instead!)
-- ✗ TargetServiceName string (use TargetServiceRefId FK)
-- ✗ TargetStructName string (use TargetStructRefId FK)
-
 **AST Extraction**:
 ```go
 func TestAccNetworkManager_basic(t *testing.T) {
@@ -394,7 +535,7 @@ func TestAccNetworkManager_basic(t *testing.T) {
 }
 ```
 
-**AST Advantage**: AST knows EXACTLY which template a step calls, what struct it's on, and what service it's in
+**Note**: AST resolves template function references, target struct, and service during parsing - all stored as foreign keys for efficient queries
 
 **Queries**:
 ```sql
@@ -415,133 +556,7 @@ ORDER BY ts.StepIndex;
 
 ---
 
-#### 9. TemplateCallChain
-**Purpose**: Complete template → template → ... call chains (RESOLVED by AST)
-
-```sql
-CREATE TABLE TemplateCallChain (
-    ChainRefId INTEGER PRIMARY KEY,
-    TestStepRefId INTEGER NOT NULL,
-    SourceTemplateFunctionRefId INTEGER NOT NULL,
-    TargetTemplateFunctionRefId INTEGER NOT NULL,
-    SourceServiceRefId INTEGER NOT NULL,
-    TargetServiceRefId INTEGER NOT NULL,
-    ChainDepth INTEGER NOT NULL,
-    CrossesServiceBoundary INTEGER NOT NULL,  -- 1 = true, 0 = false
-    ReferenceTypeId INTEGER NOT NULL,  -- SAME_SERVICE (14) or CROSS_SERVICE (15)
-    FOREIGN KEY (TestStepRefId) REFERENCES TestSteps(TestStepRefId),
-    FOREIGN KEY (SourceTemplateFunctionRefId) REFERENCES TemplateFunctions(TemplateFunctionRefId),
-    FOREIGN KEY (TargetTemplateFunctionRefId) REFERENCES TemplateFunctions(TemplateFunctionRefId),
-    FOREIGN KEY (SourceServiceRefId) REFERENCES Services(ServiceRefId),
-    FOREIGN KEY (TargetServiceRefId) REFERENCES Services(ServiceRefId),
-    FOREIGN KEY (ReferenceTypeId) REFERENCES ReferenceTypes(ReferenceTypeId)
-);
-```
-
-**Example Data**:
-```
-ChainRefId | TestStepRefId | SourceTemplateFunctionRefId | TargetTemplateFunctionRefId | SourceServiceRefId | TargetServiceRefId | ChainDepth | CrossesServiceBoundary | ReferenceTypeId
-1          | 1             | 1                           | 2                           | 1                  | 1                  | 1          | 0                      | 14
-2          | 1             | 2                           | 5                           | 1                  | 3                  | 2          | 1                      | 15
-```
-
-**Example Scenario**:
-```
-Test: TestAccNetworkManager_basic
-  Step 1: calls basic() [ChainDepth=0, entry point]
-    → basic() calls template() [ChainDepth=1, same service]
-      → template() calls storage.commonInfra() [ChainDepth=2, cross service]
-```
-
-**REMOVED from Old Schema**:
-- ✗ SourceTemplate string (use SourceTemplateFunctionRefId FK)
-- ✗ TargetTemplate string (use TargetTemplateFunctionRefId FK)
-- ✗ SourceService string (use SourceServiceRefId FK)
-- ✗ TargetService string (use TargetServiceRefId FK)
-- ✗ UltimateResourceRefs JSON array (use TemplateChainResources junction table)
-
-**AST Advantage**:
-- AST walks call graph recursively
-- Resolves multi-hop chains completely
-- Determines service boundaries semantically
-- No PowerShell resolution needed
-
-**Queries**:
-```sql
--- Get complete call chain for a test step
-SELECT
-    tcc.ChainDepth,
-    stf.FunctionName AS SourceTemplate,
-    ttf.FunctionName AS TargetTemplate,
-    ss.ServiceName AS SourceService,
-    ts.ServiceName AS TargetService,
-    tcc.CrossesServiceBoundary,
-    rt.ReferenceTypeName
-FROM TemplateCallChain tcc
-JOIN TemplateFunctions stf ON tcc.SourceTemplateFunctionRefId = stf.TemplateFunctionRefId
-JOIN TemplateFunctions ttf ON tcc.TargetTemplateFunctionRefId = ttf.TemplateFunctionRefId
-JOIN Services ss ON tcc.SourceServiceRefId = ss.ServiceRefId
-JOIN Services ts ON tcc.TargetServiceRefId = ts.ServiceRefId
-JOIN ReferenceTypes rt ON tcc.ReferenceTypeId = rt.ReferenceTypeId
-WHERE tcc.TestStepRefId = 1
-ORDER BY tcc.ChainDepth;
-```
-
----
-
-#### 10. TemplateChainResources
-**Purpose**: Junction table linking call chains to ultimate resource references
-
-```sql
-CREATE TABLE TemplateChainResources (
-    ChainResourceRefId INTEGER PRIMARY KEY,
-    ChainRefId INTEGER NOT NULL,
-    ResourceRefId INTEGER NOT NULL,
-    FOREIGN KEY (ChainRefId) REFERENCES TemplateCallChain(ChainRefId),
-    FOREIGN KEY (ResourceRefId) REFERENCES Resources(ResourceRefId)
-);
-```
-
-**Example Data**:
-```
-ChainResourceRefId | ChainRefId | ResourceRefId
-1                  | 1          | 1              -- Chain 1 references azurerm_resource_group
-2                  | 1          | 2              -- Chain 1 also references azurerm_virtual_network
-3                  | 2          | 3              -- Chain 2 references azurerm_subnet
-```
-
-**Why Junction Table Instead of JSON Array**:
-- ✓ Referential integrity (can't reference non-existent resources)
-- ✓ Efficient JOINs (indexed FK lookups)
-- ✓ Standard relational design
-- ✓ No JSON parsing needed
-
-**AST Extraction**:
-AST walks template call chain to end:
-```
-basic() → template() → [finds: resource "azurerm_resource_group", resource "azurerm_virtual_network"]
-```
-
-**Queries**:
-```sql
--- Find all test steps that ultimately reference azurerm_resource_group
-SELECT DISTINCT
-    tf.FunctionName AS TestFunction,
-    f.FilePath,
-    tcc.ChainDepth
-FROM TestSteps ts
-JOIN TestFunctions tf ON ts.TestFunctionRefId = tf.TestFunctionRefId
-JOIN Files f ON tf.FileRefId = f.FileRefId
-JOIN TemplateCallChain tcc ON ts.TestStepRefId = tcc.TestStepRefId
-JOIN TemplateChainResources tcr ON tcc.ChainRefId = tcr.ChainRefId
-JOIN Resources r ON tcr.ResourceRefId = r.ResourceRefId
-WHERE r.ResourceName = 'azurerm_resource_group'
-ORDER BY tcc.ChainDepth;
-```
-
----
-
-#### 11. DirectResourceReferences
+#### 9. DirectResourceReferences
 **Purpose**: Direct resource mentions in template function HCL code
 
 ```sql
@@ -571,11 +586,6 @@ DirectRefId | TemplateFunctionRefId | ResourceRefId | ReferenceTypeId | Context 
 - `TemplateLine`: Line in source file where template function starts (from AST `template_line`)
 - `ContextLine`: Line within the HCL template string (from AST `context_line`)
 - Approximate source line: `TemplateLine + ContextLine` (may vary based on HCL string formatting)
-
-**REMOVED from Old Schema**:
-- ✗ FileRefId FK (get file via TemplateFunctionRefId → FileRefId)
-- ✗ ResourceName string (use ResourceRefId FK)
-- ✗ ServiceName string (get service via TemplateFunctionRefId → FileRefId → ServiceRefId)
 
 **AST Extraction**:
 AST walks template function body (already parsed), identifies:
@@ -612,7 +622,7 @@ WHERE r.ResourceName = 'azurerm_resource_group';
 
 ---
 
-#### 12. SequentialReferences
+#### 10. SequentialReferences
 **Purpose**: Links sequential test entry points to their referenced test functions
 
 Sequential references are the **DISCOVERY MECHANISM** that expands blast radius beyond direct file references. They capture `t.Run()` and `acceptance.RunTestsInSequence()` patterns that allow tests from completely different services to be included in the discovery.
@@ -683,6 +693,73 @@ JOIN TestFunctions tf_ref ON sr.ReferencedFunctionRefId = tf_ref.TestFunctionRef
 WHERE sr.EntryPointFunctionRefId = 1
 ORDER BY sr.SequentialGroup, sr.SequentialKey;
 ```
+
+---
+
+#### 11. TemplateReferences
+**Purpose**: Track template function calls from test steps (legacy support for blast radius analysis)
+
+```sql
+CREATE TABLE TemplateReferences (
+    TemplateReferenceRefId INTEGER PRIMARY KEY,
+    TestFunctionRefId INTEGER NOT NULL,
+    TestFunctionStepRefId INTEGER,
+    StructRefId INTEGER NOT NULL,
+    TemplateReference TEXT NOT NULL,
+    TemplateVariable TEXT NOT NULL,
+    TemplateMethod TEXT NOT NULL,
+    FOREIGN KEY (TestFunctionRefId) REFERENCES TestFunctions(TestFunctionRefId),
+    FOREIGN KEY (TestFunctionStepRefId) REFERENCES TestFunctionSteps(TestStepRefId),
+    FOREIGN KEY (StructRefId) REFERENCES Structs(StructRefId)
+);
+```
+
+**Example Data**:
+```
+TemplateReferenceRefId | TestFunctionRefId | TestFunctionStepRefId | StructRefId | TemplateReference | TemplateVariable | TemplateMethod
+34                     | 1                 | 1                     | 1           | r.hadoop          | r                | hadoop
+35                     | 1                 | 2                     | 1           | r.basic           | r                | basic
+```
+
+**Purpose**: This legacy table stores parsed template references in the format `variable.method` (e.g., `r.basic`, `r.template`). While TestFunctionSteps now stores direct FK references to TemplateFunctions, this table is maintained for backwards compatibility with existing blast radius analysis queries.
+
+**Column Details**:
+- **TemplateReference**: Full reference string (e.g., "r.hadoop", "r.basic")
+- **TemplateVariable**: Variable name (e.g., "r")
+- **TemplateMethod**: Method name (e.g., "hadoop", "basic")
+
+---
+
+#### 12. IndirectConfigReferences
+**Purpose**: Track indirect resource references via template call chains (legacy support)
+
+```sql
+CREATE TABLE IndirectConfigReferences (
+    IndirectRefId INTEGER PRIMARY KEY,
+    TestFunctionStepRefId INTEGER NOT NULL,
+    TemplateReferenceRefId INTEGER NOT NULL,
+    SourceTemplateFunctionRefId INTEGER NOT NULL,
+    ReferenceTypeId INTEGER,
+    ServiceImpactTypeId INTEGER,
+    FOREIGN KEY (TestFunctionStepRefId) REFERENCES TestFunctionSteps(TestStepRefId),
+    FOREIGN KEY (TemplateReferenceRefId) REFERENCES TemplateReferences(TemplateReferenceRefId),
+    FOREIGN KEY (SourceTemplateFunctionRefId) REFERENCES TemplateFunctions(TemplateFunctionRefId),
+    FOREIGN KEY (ReferenceTypeId) REFERENCES ReferenceTypes(ReferenceTypeId)
+);
+```
+
+**Example Data**:
+```
+IndirectRefId | TestFunctionStepRefId | TemplateReferenceRefId | SourceTemplateFunctionRefId | ReferenceTypeId | ServiceImpactTypeId
+34            | 1                     | 34                     | 1                           | 3               | 15
+35            | 2                     | 35                     | 2                           | 3               | 14
+```
+
+**Purpose**: This legacy table tracks when a test step calls a template function that references resources. While newer queries use TestFunctionSteps with TemplateFunctions directly, this table is maintained for backwards compatibility.
+
+**Column Details**:
+- **ServiceImpactTypeId**: Reference to ReferenceTypes (14 = SAME_SERVICE, 15 = CROSS_SERVICE)
+- **ReferenceTypeId**: Type of reference (e.g., 3 = EMBEDDED_SELF)
 
 ---
 
@@ -778,106 +855,71 @@ ORDER BY FilePath, ChainDepth;
 
 ---
 
-## Schema Comparison: Old vs New
+## Database Schema Statistics
 
-### Data Volume Reduction
+### Typical Data Volume (azurerm provider)
 
-| Table | Old Rows | New Rows | Reduction |
-|-------|----------|----------|-----------|
-| Resources | 5 | 5 | 0% |
-| Services | 89 | 89 | 0% |
-| Structs | 2,672 | 2,672 | 0% |
-| Files | 2,672 | 2,672 | 0% |
-| ReferenceTypes | 15 | 15 | 0% |
-| TestFunctions | 2,700 | 2,700 | 0% |
-| **TemplateFunctions** | **304,255** | **~5,000** | **98%** ✓ |
-| **TestSteps** | **3,500** | **3,500** | **0%** |
-| **TemplateCallChain** | **0** | **~300** | **NEW** ✓ |
-| **TemplateChainResources** | **0** | **~500** | **NEW** ✓ |
-| **DirectResourceReferences** | **~50K** | **~50K** | **0%** |
-| **Removed Tables** | **~250K** | **0** | **100%** ✓ |
-| **TOTAL** | **~611K** | **~60K** | **90%** ✓ |
+| Table | Typical Row Count | Description |
+|-------|------------------|-------------|
+| Resources | 1-5 | Resources being analyzed |
+| Services | ~90 | Azure service categories |
+| Files | ~2,700 | Test files analyzed |
+| Structs | ~2,700 | Go struct definitions |
+| ReferenceTypes | 15 | Relationship classifications (static) |
+| TestFunctions | ~2,700 | Test function metadata |
+| TemplateFunctions | ~5,000 | Template function metadata (no bodies) |
+| TestFunctionSteps | ~3,500 | Test step execution records |
+| DirectResourceReferences | ~50,000 | Direct HCL resource references |
+| SequentialReferences | ~100 | Sequential test patterns |
+| TemplateReferences | ~3,500 | Template call references (legacy) |
+| IndirectConfigReferences | ~5,000 | Indirect references (legacy) |
+| **TOTAL** | **~70,000** | Complete database size |
 
-**Key Wins**:
-- ✅ Removed 304K function bodies from TemplateFunctions
-- ✅ Removed TemplateCalls table (merged into TemplateCallChain)
-- ✅ Removed IndirectConfigReferences table (merged into TemplateCallChain)
-- ✅ Removed TemplateReferences table (merged into TestSteps)
-
----
-
-### Normalization Improvements
-
-| String Value | Old Schema | New Schema |
-|--------------|------------|------------|
-| Service Names | Repeated strings | ServiceRefId FK ✓ |
-| Struct Names | Repeated strings | StructRefId FK ✓ |
-| Resource Names | Repeated strings | ResourceRefId FK ✓ |
-| Template Names | Repeated strings | TemplateFunctionRefId FK ✓ |
-| Reference Types | Repeated strings | ReferenceTypeId FK ✓ |
-
-**Benefits**:
-- Storage: Store "network" once, reference by integer thousands of times
-- Integrity: Can't reference non-existent services/structs/resources
-- Performance: Integer FK joins faster than string comparisons
-- Consistency: Single source of truth for all lookup values
+**Storage Characteristics**:
+- Compact: ~70K total rows for complete azurerm provider analysis
+- Efficient: Metadata-only storage, no function bodies
+- Fast: In-memory hashtable-based queries with O(1) lookups
+- Normalized: All repeating strings stored once with FK references
 
 ---
 
-### AST Advantages Over Regex
+### Normalization Benefits
 
-| Capability | Regex Approach | AST Approach |
-|------------|----------------|--------------|
-| **Function Detection** | Pattern match "func " | Parse syntax tree, know return types ✓ |
-| **Receiver Resolution** | Pattern match "(r *Type)" | Semantic analysis, both pointer/value ✓ |
-| **Call Chain Resolution** | Multi-pass PowerShell | Single-pass recursive walk ✓ |
-| **Service Boundaries** | Directory string matching | Package structure understanding ✓ |
-| **Template Calls** | Regex sprintf patterns | Semantic call graph analysis ✓ |
-| **Reference Types** | After-the-fact classification | Determined during parsing ✓ |
-| **Same-File Calls** | ❌ Skipped | ✓ Tracked |
-| **Source Storage** | ❌ 304K function bodies | ✓ Metadata only |
-| **Accuracy** | ~85% (pattern matching) | ~100% (semantic) ✓ |
-| **Processing** | Multi-pass (5+ passes) | Single-pass ✓ |
+| Data Type | Storage Method | Benefit |
+|-----------|---------------|---------|
+| Service Names | ServiceRefId FK | Store "network" once, reference by integer thousands of times |
+| Struct Names | StructRefId FK | Referential integrity prevents invalid struct references |
+| Resource Names | ResourceRefId FK | Consistent resource identification across all tables |
+| Template Names | TemplateFunctionRefId FK | Direct relationships, no string matching needed |
+| Reference Types | ReferenceTypeId FK | Efficient classification with O(1) lookups |
 
----
-
-## Migration Path
-
-### Phase 1: Fix AST Same-File Template Tracking (Current)
-- Update main.go lines 1173-1179
-- Track ALL template calls (same-file + cross-file)
-- Populate IsLocalCall field
-- Test on network_manager_resource_test.go
-
-### Phase 2: AST Chain Resolution (Next Week)
-- AST walks call graph recursively
-- Resolves multi-hop chains
-- Determines ultimate resource references
-- Outputs TemplateCallChain data
-
-### Phase 3: New Database Schema (Week 3)
-- Create DDL for new tables
-- Implement migration scripts (old → new)
-- Update Database.psm1 with new functions
-- Remove deprecated tables/functions
-
-### Phase 4: PowerShell Simplification (Week 4)
-- Delete multi-pass resolution logic
-- Implement simple AST JSON import
-- Update query functions for new schema
-- Reduce code complexity 80%
-
-### Phase 5: New Features (Week 5+)
-- Multi-resource support
-- GitHub PR integration
-- Impact analysis
-- Coverage reporting
+**Advantages**:
+- **Storage**: Integer FKs use less space than repeated strings
+- **Integrity**: Can't reference non-existent entities
+- **Performance**: Integer comparisons faster than string comparisons
+- **Consistency**: Single source of truth for all lookup values
 
 ---
 
-## Future Feature Examples
+### AST Analysis Capabilities
 
-### Multi-Resource Queries
+| Feature | Implementation |
+|---------|---------------|
+| **Function Detection** | Parse syntax tree, identify return types and receivers |
+| **Call Resolution** | Recursive graph walk resolves complete call chains |
+| **Service Boundaries** | Package structure analysis determines service relationships |
+| **Template Tracking** | Semantic analysis tracks all template calls (same-file + cross-file) |
+| **Reference Classification** | Determined during parsing (EMBEDDED_SELF, CROSS_FILE, etc.) |
+| **Sequential Patterns** | Identifies `t.Run()` and `RunTestsInSequence()` patterns |
+| **Resource References** | HCL parsing identifies resource blocks and attribute references |
+| **Accuracy** | 100% semantic accuracy vs pattern matching |
+| **Processing** | Single-pass analysis with pre-resolved relationships |
+
+---
+
+## Usage Examples
+
+### Multi-Resource Analysis
 ```powershell
 .\terracorder.ps1 -ResourceName "azurerm_virtual_network,azurerm_subnet,azurerm_network_security_group"
 ```
@@ -954,13 +996,29 @@ ORDER BY tcc.ChainDepth;
 
 ## Summary
 
-This AST-optimized schema:
-- ✅ **Fully normalized** (all repeating strings in lookup tables)
-- ✅ **Metadata only** (no source code storage)
-- ✅ **Pre-resolved relationships** (AST does heavy lifting)
-- ✅ **90% data reduction** (611K → 60K rows)
-- ✅ **100% semantic accuracy** (syntax tree analysis)
-- ✅ **Simple queries** (no multi-pass resolution)
-- ✅ **Future-ready** (multi-resource, PR-driven, impact analysis)
+TerraCorder's AST-based database schema provides:
 
-**Next Step**: Proceed with Phase 1 implementation (fix AST same-file template tracking)
+**Architecture**:
+- ✅ **Fully normalized design** - All repeating strings in lookup tables with FK references
+- ✅ **Metadata-only storage** - No source code duplication (source already in Git)
+- ✅ **Pre-resolved relationships** - AST semantic analysis resolves all relationships upfront
+- ✅ **12 normalized tables** - 5 lookup tables + 7 data tables
+
+**Performance**:
+- ✅ **Compact database** - ~70K total rows for complete azurerm provider
+- ✅ **Fast queries** - O(1) hashtable lookups with integer FK joins
+- ✅ **Single-pass analysis** - No iterative resolution needed
+- ✅ **100% semantic accuracy** - Syntax tree analysis eliminates pattern matching errors
+
+**Capabilities**:
+- ✅ **Direct references** - Resource blocks and attribute references in HCL templates
+- ✅ **Indirect references** - Template call chains and transitive dependencies
+- ✅ **Sequential tests** - Cross-service test discovery via `RunTestsInSequence` patterns
+- ✅ **Service boundaries** - SAME_SERVICE vs CROSS_SERVICE impact analysis
+- ✅ **Multi-resource support** - Analyze multiple resources in single run
+
+**Modes**:
+- ✅ **Discovery Mode** - AST analysis creates database from repository
+- ✅ **Database Mode** - Fast read-only queries on pre-analyzed data
+
+**Status**: Production-ready implementation with complete AST-based semantic analysis

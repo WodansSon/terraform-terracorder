@@ -2,9 +2,9 @@
 
 *"Analyzing Terraform test matrix... Building comprehensive dependency database!"*
 
-A high-performance **database-driven** Terraform test analysis tool that identifies all tests needed when modifying Azure resources in the Terraform AzureRM provider. TerraCorder builds a complete relational database of test dependencies, tracking direct resource usage, template references, and sequential test patterns with full foreign key relationships.
+A high-performance **AST-based semantic analysis tool** that identifies all tests needed when modifying Azure resources in the Terraform AzureRM provider. TerraCorder uses a Go AST (Abstract Syntax Tree) analyzer to perform deep syntactic parsing of test files, building a complete relational database of test dependencies with direct resource usage, template references, and sequential test patterns tracked through full foreign key relationships.
 
-**Two powerful modes:** Discovery Mode for initial analysis with multi-threaded processing, and Database Mode for fast querying of previously analyzed data!
+**Two powerful modes:** Discovery Mode for initial AST analysis and database building, and Database Mode for fast querying of previously analyzed data!
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?style=flat&logo=powershell&logoColor=white)](https://github.com/PowerShell/PowerShell)
 [![Terraform](https://img.shields.io/badge/Terraform-623CE4?style=flat&logo=terraform&logoColor=white)](https://www.terraform.io/)
@@ -15,14 +15,15 @@ A high-performance **database-driven** Terraform test analysis tool that identif
 ## Features
 
 ### Discovery Mode (Initial Analysis)
+- **AST Semantic Analysis**: Go-based Abstract Syntax Tree parser performs deep syntactic analysis (not regex pattern matching)
 - **Relational Database Architecture**: Full normalized database with foreign key relationships tracking all test dependencies
-- **Multi-Threaded Processing**: Parallel file processing with up to 8 threads for maximum performance
-- **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns
+- **Single-Pass AST Processing**: Efficient AST analyzer extracts all metadata in one pass per file
+- **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns through AST call graph analysis
 - **Database Export**: Complete CSV exports of all 12 database tables for advanced analysis
-- **Visual Progress Tracking**: Real-time multi-threaded progress with file-by-file scanning feedback
+- **Visual Progress Tracking**: Real-time progress with file-by-file scanning feedback during sequential discovery
 - **Smart Test Command Generation**: Automatically generates optimized `go test` commands by service
-- **Sequential Test Support**: Detects and tracks `acceptance.RunTestsInSequence` patterns
-- **Template Function Analysis**: Maps complete template dependency chains across files
+- **Sequential Test Support**: Detects and tracks `acceptance.RunTestsInSequence` patterns via AST parsing
+- **Template Function Analysis**: Maps complete template dependency chains across files through AST call graph resolution
 
 ### Database Mode (Query Existing Data)
 - **Fast Query Operations**: Analyze previously discovered data in seconds, not minutes
@@ -76,15 +77,9 @@ $modules = @(
     "Database.psm1",
     "DatabaseMode.psm1",
     "FileDiscovery.psm1",
-    "PatternAnalysis.psm1",
+    "ASTImport.psm1",
     "ProcessingCore.psm1",
-    "ReferencesProcessing.psm1",
     "RelationalQueries.psm1",
-    "SequentialProcessing.psm1",
-    "TemplateProcessing.psm1",
-    "TemplateProcessingStrategies.psm1",
-    "TestFunctionProcessing.psm1",
-    "TestFunctionStepsProcessing.psm1",
     "UI.psm1"
 )
 
@@ -168,20 +163,15 @@ $subnetTests = $tests | Where-Object { $_.FunctionName -like "*Subnet*" }
 
 ## Real-World Performance
 
-TerraCorder uses multi-threaded processing for maximum performance:
+TerraCorder uses AST semantic analysis for comprehensive dependency detection:
 
 ### Example: `azurerm_resource_group` Analysis
 ```
 Phase 1: File Discovery               : 2,695 files found, 1,277 relevant in 4,826 ms
-Phase 2: Multi-Threaded File Reading  : 8 threads, 8,473 functions found in 2,406 ms
-Phase 3: Sequential Pattern Detection : 24 additional patterns in 1,621 ms
-Phase 4: Database Population          : 1,282 files, 8,591 steps in 35,584 ms
-Phase 5: Reference Processing         : 26,771 direct, 12,700 config refs in 8,468 ms
-Phase 6: Sequential References        : 273 sequential links in 60 ms
-Phase 7: Test Command Generation      : 127 services in 533 ms
-Phase 8: Database Export              : 12 tables in 489 ms
+Phase 2: AST Analysis & DB Import      : 8,473 functions, 26,771 refs in 47,927 ms
+Phase 3: CSV Export                    : 12 tables exported in 489 ms
 
-Total Execution Time                  : 54.3 seconds
+Total Execution Time                  : 53.2 seconds
 ```
 
 ### Database Size: `azurerm_kubernetes_cluster`
@@ -201,53 +191,40 @@ ReferenceTypes Table                  : 13 reference types
 
 ## How It Works
 
-### Discovery Mode - 8-Phase Database-Driven Analysis
+### Discovery Mode - 3-Phase AST-Driven Analysis
 
-TerraCorder uses an **8-phase approach** to build the complete test dependency database:
+TerraCorder uses a **streamlined 3-phase approach** with AST (Abstract Syntax Tree) semantic analysis:
 
 #### Phase 1: File Discovery and Filtering
 - Discovers all `*_test.go` and `*_resource.go` files in `internal/services/`
 - Filters to files containing the target resource name
 - Uses fast string matching for initial filtering
+- Identifies sequential test patterns and additional test files
 
-#### Phase 2: Multi-Threaded File Reading and Categorization
-- Parallel processing with up to 8 threads
-- Reads and categorizes files based on test patterns
-- Real-time progress tracking with thread-safe updates
-
-#### Phase 3: Sequential Test Pattern Detection
-- Identifies `acceptance.RunTestsInSequence` patterns
-- Discovers additional test files through sequential relationships
-
-#### Phase 4: Database Population
-- Multi-threaded population of core database tables
-- Creates Services, Files, Structs, TestFunctions records
-- Establishes foreign key relationships
-
-#### Phase 5: Resource and Configuration Reference Processing
-- Tracks direct resource usage (DirectResourceReferences)
-- Analyzes template functions (TemplateFunctions)
-- Maps template calls (TemplateReferences)
-- Resolves indirect dependencies (IndirectConfigReferences)
-
-#### Phase 6: Sequential References Population
-- Links sequential test entry points to referenced functions
-- Updates TestFunctions with entry point relationships
-- Builds SequentialReferences table
+#### Phase 2: AST Analysis and Database Import
+- **Go AST analyzer** performs deep syntactic parsing of all discovered files
+- Extracts complete metadata through semantic analysis (not regex pattern matching):
+  - Test function signatures and structures
+  - Resource struct declarations
+  - Template function definitions
+  - Function call graphs and dependencies
+  - Direct and indirect resource references
+  - Sequential test relationships
+- Imports AST metadata into normalized database tables
+- Creates all records: Services, Files, Structs, TestFunctions, TemplateReferences, etc.
+- Establishes all foreign key relationships
 - **Creates external stub records** for cross-resource sequential references
   - Maintains referential integrity when sequential tests reference functions from other resources
   - Stubs marked with `Line = 0`, `FunctionBody = "EXTERNAL_REFERENCE"`, and `ReferenceTypeId = 10`
   - Ensures complete sequential test structure is visible in blast radius analysis
+- Generates optimized `go test` commands grouped by Azure service
+- Single-pass processing with real-time progress tracking
 
-#### Phase 7: Go Test Command Generation
-- Groups tests by Azure service
-- Generates optimized `go test` commands
-- Exports `go_test_commands.txt` file
-
-#### Phase 8: Database CSV Export
-- Exports all 12 database tables to CSV
+#### Phase 3: CSV Export
+- Exports all 12 database tables to CSV files
 - Maintains proper column headers even for empty tables
-- Provides comprehensive dataset for analysis
+- Provides comprehensive dataset for analysis and reporting
+- Exports `go_test_commands.txt` file for CI/CD integration
 
 ### Database Mode - Fast Query Operations
 
@@ -274,6 +251,35 @@ Database Mode loads previously exported CSV files for instant analysis:
 - **Analysis**: Multiple queries without re-scanning files
 - **Reporting**: Generate reports from structured data
 - **Progressive Discovery**: View options first, then choose your analysis
+
+### AST Analyzer - Go-Based Semantic Parser
+
+TerraCorder uses a **Go AST (Abstract Syntax Tree) analyzer** for accurate semantic analysis:
+
+#### Why AST Over Regex?
+- **100% Accuracy**: AST parsing understands Go syntax semantically, not just text patterns
+- **No False Positives**: Distinguishes between function definitions, calls, and comments
+- **Call Graph Resolution**: Tracks actual function call relationships through syntax trees
+- **Single-Pass Efficiency**: Extracts all metadata in one pass per file
+- **Reliable Detection**: Identifies test functions, structs, templates, and dependencies accurately
+
+#### How It Works
+1. **AST Parsing**: Go's `go/parser` package builds complete syntax trees
+2. **Semantic Analysis**: Walks AST nodes to identify:
+   - Function declarations (`func (r ResourceType) FunctionName()`)
+   - Struct definitions (`type ResourceType struct`)
+   - Function calls and call graphs
+   - Test function patterns (`func TestAcc*`)
+   - Template function relationships
+3. **Metadata Export**: Outputs structured JSON with all discovered elements
+4. **PowerShell Import**: ASTImport.psm1 loads JSON into normalized database
+
+#### Location
+- Pre-built binary: `tools/ast-analyzer/ast-analyzer` (Linux/macOS) or `ast-analyzer.exe` (Windows)
+- Source code: `tools/ast-analyzer/*.go`
+- Build instructions: `tools/ast-analyzer/README.md`
+
+**Note**: The AST analyzer is automatically invoked by TerraCorder during Discovery Mode Phase 2. You don't need to run it manually unless you're debugging or developing.
 
 ## Database Schema
 
@@ -310,41 +316,23 @@ Database Initialization: Completed in 15 ms
 Phase 1: File Discovery and Filtering...
  [INFO] Discovered 3,421 Test Files
  [INFO] Filtered To 127 Relevant Files
+ [INFO] Found 12 Additional Sequential Test Files
 Phase 1: Completed in 245 ms
 
-Phase 2: Reading and Categorizing Relevant Test Files...
+Phase 2: AST Analysis and Database Import...
  [INFO] Processing file 127 of 127 (100%) - Complete
- [INFO] Processed 127 Files Using 8 Threads
-Phase 2: Completed in 1,234 ms
-
-Phase 3: Finding Additional Sequential Test Patterns...
- [INFO] Found 12 Additional Sequential Test Files
-Phase 3: Completed in 15 ms
-
-Phase 4: Populating Database Tables...
- [INFO] Populating database 139 of 139 (100%) - Complete
- [INFO] Populated 139 Files Using 8 Threads
-Phase 4: Completed in 456 ms
-
-Phase 5: Populating Resource and Configuration References...
+ [INFO] Processed 127 Files Through AST Parser
  [INFO] Found 89 Direct Resource References
- [INFO] Found 234 Test Configuration References
- [INFO] Processing Test Configuration Indirect References
+ [INFO] Found 234 Template References
  [INFO] Created 567 Indirect Configuration References
-Phase 5: Completed in 789 ms
-
-Phase 6: Populating SequentialReferences table...
- [INFO] No Sequential Test Functions Detected - Skipping Sequential Processing
-Phase 6: Completed in 3 ms
-
-Phase 7: Generating go test commands...
+ [INFO] Linked 24 Sequential Test Relationships
  [INFO] Generated Test Commands For 1 Service
- [INFO] Exported: go_test_commands.txt
-Phase 7: Completed in 46 ms
+Phase 2: Completed in 2,456 ms
 
-Phase 8: Exporting Database CSV Files...
+Phase 3: Exporting Database CSV Files...
  [INFO] Exported: 12 Tables
-Phase 8: Completed in 61 ms
+ [INFO] Exported: go_test_commands.txt
+Phase 3: Completed in 61 ms
 
 ============================================================
  Required Acceptance Test Execution:
@@ -353,7 +341,7 @@ Phase 8: Completed in 61 ms
   Service Name: resourcegroup
     go test -timeout 30000s -v ./internal/services/resourcegroup -run "TestAccResourceGroup_"
 
-Total Execution Time: 3705 ms (3.7 seconds)
+Total Execution Time: 2762 ms (2.8 seconds)
 ```
 
 ### Visual Blast Radius Analysis (Database Mode)
@@ -537,8 +525,8 @@ Please verify:
 ### Performance Optimization
 
 For large repositories:
-- **Thread count** is automatically optimized (2-8 threads based on CPU cores)
-- **Memory usage** peaks during Phase 2 (file reading) and Phase 4 (database population)
+- **AST parsing** performs single-pass semantic analysis per file
+- **Memory usage** peaks during Phase 2 (AST analysis) and Phase 4 (database population)
 - **Disk I/O** is highest during Phase 8 (CSV export)
 
 To improve performance:
@@ -574,8 +562,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Built for the Terraform AzureRM provider community
-- Designed for comprehensive test dependency analysis
-- Optimized for multi-threaded performance on modern hardware
+- Designed for comprehensive test dependency analysis through AST semantic analysis
+- Uses Go AST parser for accurate syntactic analysis
+- Optimized for efficient single-pass processing
 
 ---
 
@@ -589,9 +578,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Requirements
 
-- **PowerShell**: PowerShell Core 7.0 or later (required for multi-threading)
+- **PowerShell**: PowerShell Core 7.0 or later
 - **Operating System**: Windows, Linux, or macOS
 - **Memory**: Recommended 4GB+ for large repositories
+- **Go**: Go 1.16+ (for building AST analyzer from source, pre-built binary included)
 - **Terraform AzureRM Provider**: Source code for analysis
 - **Terminal**: ANSI color support recommended for visual tree diagrams (Windows Terminal, VS Code integrated terminal, or modern Linux/macOS terminal)
 

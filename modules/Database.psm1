@@ -70,13 +70,12 @@ $script:TestFunctions = @{}             # FunctionRefId -> TestFunction record (
 $script:TestSteps = @{}                 # TestStepRefId -> TestStep record (with TestFunctionRefId, TemplateFunctionRefId, TargetStructRefId, TargetServiceRefId, ReferenceTypeId FKs)
 $script:TestFunctionStepIndex = $null   # Composite index: "TestFunctionRefId-StepIndex" -> TestFunctionStepRefId (built on first use)
 $script:DirectResourceReferences = @{}  # DirectRefId -> DirectReference record (with FileRefId, ReferenceTypeId FKs)
-$script:IndirectConfigReferences = @{}  # IndirectRefId -> IndirectReference record (with TemplateReferenceRefId, SourceTemplateFunctionRefId, ReferenceTypeId FKs)
+$script:IndirectConfigReferences = @{}  # IndirectRefId -> IndirectReference record (with TestFunctionStepRefId, TemplateReferenceRefId, SourceTemplateFunctionRefId, ReferenceTypeId FKs)
 $script:TemplateFunctions = @{}         # TemplateFunctionRefId -> TemplateFunction record (with ServiceRefId, FileRefId, StructRefId FKs)
-$script:TemplateCalls = @{}             # TemplateCallRefId -> TemplateCall record (deprecated - use proper JOINs instead)
 $script:TemplateCallChain = @{}         # ChainRefId -> TemplateCallChain record (AST-optimized template call chains)
 $script:TemplateChainResources = @{}    # ChainResourceRefId -> Junction table (ChainRefId → ResourceRefId)
 $script:SequentialReferences = @{}      # SequentialRefId -> Sequential record (with EntryPointFunctionRefId, ReferencedFunctionRefId FKs)
-$script:TemplateReferences = @{}        # TemplateReferenceRefId -> TemplateReference record (with TestFunctionRefId, StructRefId FKs)
+$script:TemplateReferences = @{}        # TemplateReferenceRefId -> TemplateReference record (with TestFunctionRefId, TestFunctionStepRefId, StructRefId FKs)
 
 # Performance indexes for O(1) lookups
 $script:FilePathToRefIdIndex = @{}      # FilePath -> FileRefId (for fast reverse lookups)
@@ -84,6 +83,7 @@ $script:StructsByFileIndex = @{}        # FileRefId -> Array of StructRefIds (fo
 $script:StructsByNameIndex = @{}        # StructName -> StructRefId (for O(1) name-based struct lookups)
 $script:TestFunctionStepsByRefTypeIndex = @{}  # ReferenceTypeId -> Array of TestFunctionStepRefIds (for O(1) reference type filtering)
 $script:TestFunctionsByIdIndex = @{}    # TestFunctionRefId -> TestFunction record (for O(1) test function lookups)
+$script:TestFunctionsByNameIndex = @{}  # FunctionName -> Array of TestFunctionRefIds (for O(1) name-based lookups, can have duplicates)
 
 # Auto-increment counters for primary keys
 $script:ResourceRefIdCounter = 1
@@ -178,7 +178,6 @@ function Initialize-TerraDatabase {
     $script:DirectResourceReferences.Clear()
     $script:IndirectConfigReferences.Clear()
     $script:TemplateFunctions.Clear()  # Template function definitions
-    $script:TemplateCalls.Clear()  # Function call index (old)
     $script:TemplateCallChain.Clear()  # AST-optimized call chains
     $script:TemplateChainResources.Clear()  # Junction table
     $script:SequentialReferences.Clear()
@@ -191,6 +190,7 @@ function Initialize-TerraDatabase {
     $script:StructsByNameIndex.Clear()     # Clear struct-by-name index
     $script:TestFunctionStepsByRefTypeIndex.Clear()  # Clear steps-by-reference-type index
     $script:TestFunctionsByIdIndex.Clear()  # Clear test-function-by-id index
+    $script:TestFunctionsByNameIndex.Clear()  # Clear test-function-by-name index
 
     # Reset counters
     $script:ResourceRefIdCounter = 1
@@ -198,14 +198,13 @@ function Initialize-TerraDatabase {
     $script:FileRefIdCounter = 1
     $script:StructRefIdCounter = 1
     $script:FunctionRefIdCounter = 1
-    $script:TestFunctionStepRefIdCounter = 1  # Old regex-based counter
-    $script:TestStepRefIdCounter = 1  # New AST-optimized counter
+    $script:TestFunctionStepRefIdCounter = 1  # Counter for test function steps (deprecated table)
+    $script:TestStepRefIdCounter = 1  # Counter for AST-based test steps
     $script:ConfigRefIdCounter = 1
     $script:DirectRefIdCounter = 1
     $script:IndirectRefIdCounter = 1
     $script:TemplateFunctionRefIdCounter = 1  # For TemplateFunctions table
-    $script:TemplateCallRefIdCounter = 1  # For TemplateCalls table (old)
-    $script:TemplateCallChainRefIdCounter = 1  # For AST-optimized TemplateCallChain
+    $script:TemplateCallChainRefIdCounter = 1  # For AST-based TemplateCallChain
     $script:TemplateChainResourcesRefIdCounter = 1  # For junction table
     $script:SequentialRefIdCounter = 1
     $script:TemplateReferenceRefIdCounter = 1
@@ -330,18 +329,19 @@ function Add-FileRecord {
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
         [Parameter(Mandatory = $true)]
-        [int]$ServiceRefId,
-        [Parameter(Mandatory = $false)]
-        [AllowEmptyString()]
-        [string]$FileContent = ""
+        [int]$ServiceRefId
     )
+
+    # DEDUPLICATION: Check if file already exists (prevents duplicates from Phase 2 + Phase 2.5)
+    if ($script:FilePathToRefIdIndex.ContainsKey($FilePath)) {
+        return $script:FilePathToRefIdIndex[$FilePath]
+    }
 
     $fileRefId = $script:FileRefIdCounter++
     $script:Files[$fileRefId] = [PSCustomObject]@{
         FileRefId = $fileRefId
         FilePath = $FilePath
         ServiceRefId = $ServiceRefId
-        FileContent = $FileContent
     }
 
     # Maintain performance index for O(1) path-to-FileRefId lookups
@@ -385,9 +385,9 @@ function Add-TestFunctionRecord {
         [Parameter(Mandatory = $true)]
         [string]$TestPrefix,
         [Parameter(Mandatory = $false)]
-        [int]$SequentialEntryPointRefId = 0,
+        [int]$ReferenceTypeRefId = 0,
         [Parameter(Mandatory = $false)]
-        [string]$FunctionBody = ""
+        [int]$SequentialEntryPointRefId = 0
     )
 
     $functionRefId = $script:FunctionRefIdCounter++
@@ -398,14 +398,20 @@ function Add-TestFunctionRecord {
         Line = $Line                                # Line number where function was found
         FunctionName = $FunctionName                # Function name
         TestPrefix = $TestPrefix                    # Test prefix up to and including first underscore
+        ReferenceTypeRefId = $ReferenceTypeRefId    # Foreign key to ReferenceTypes (e.g., EXTERNAL_REFERENCE)
         SequentialEntryPointRefId = $SequentialEntryPointRefId # Foreign key to the entry point function that calls this function
-        FunctionBody = $FunctionBody                # Individual function body content to eliminate file duplication
     }
 
     $script:TestFunctions[$functionRefId] = $testFunction
 
     # Maintain performance index for O(1) test function by ID lookups
     $script:TestFunctionsByIdIndex[$functionRefId] = $testFunction
+
+    # Maintain performance index for O(1) test function by name lookups (supports duplicates)
+    if (-not $script:TestFunctionsByNameIndex.ContainsKey($FunctionName)) {
+        $script:TestFunctionsByNameIndex[$FunctionName] = @()
+    }
+    $script:TestFunctionsByNameIndex[$FunctionName] += $functionRefId
 
     return $functionRefId
 }
@@ -615,31 +621,23 @@ function Update-TestFunctionStepStructVisibility {
 function Update-IndirectConfigReferenceServiceImpact {
     <#
     .SYNOPSIS
-    Update the ServiceImpactTypeId and ResourceOwningServiceRefId for an IndirectConfigReference record
+    Update the ServiceImpactTypeId for an IndirectConfigReference record
 
     .PARAMETER IndirectRefId
     The IndirectConfigReference ID to update
 
     .PARAMETER ServiceImpactTypeId
     The new ServiceImpactTypeId to set (14=SAME_SERVICE, 15=CROSS_SERVICE)
-
-    .PARAMETER ResourceOwningServiceRefId
-    The ServiceRefId of the service that owns the resource being analyzed
     #>
     param(
         [Parameter(Mandatory = $true)]
         [int]$IndirectRefId,
         [Parameter(Mandatory = $true)]
-        [int]$ServiceImpactTypeId,
-        [Parameter(Mandatory = $false)]
-        [Nullable[int]]$ResourceOwningServiceRefId = $null
+        [int]$ServiceImpactTypeId
     )
 
     if ($script:IndirectConfigReferences.ContainsKey($IndirectRefId)) {
         $script:IndirectConfigReferences[$IndirectRefId].ServiceImpactTypeId = $ServiceImpactTypeId
-        if ($null -ne $ResourceOwningServiceRefId) {
-            $script:IndirectConfigReferences[$IndirectRefId].ResourceOwningServiceRefId = $ResourceOwningServiceRefId
-        }
         return $true
     }
 
@@ -744,6 +742,9 @@ function Add-IndirectConfigReferenceRecord {
     .SYNOPSIS
     Add indirect config reference using proper foreign key relationships (NORMALIZED DESIGN)
 
+    .PARAMETER TestFunctionStepRefId
+    Foreign key to TestFunctionSteps table - which test step this reference belongs to
+
     .PARAMETER TemplateReferenceRefId
     Foreign key to TemplateReferences table
 
@@ -752,19 +753,16 @@ function Add-IndirectConfigReferenceRecord {
 
     .PARAMETER ServiceImpactTypeId
     Foreign key to ReferenceTypes table for service impact classification (SAME_SERVICE=14, CROSS_SERVICE=15)
-
-    .PARAMETER ResourceOwningServiceRefId
-    Foreign key to Services table - the service that owns the resource being analyzed (e.g., recoveryservices for azurerm_recovery_services_vault)
     #>
     param(
+        [Parameter(Mandatory = $true)]
+        [int]$TestFunctionStepRefId,
         [Parameter(Mandatory = $true)]
         [int]$TemplateReferenceRefId,
         [Parameter(Mandatory = $true)]
         [int]$SourceTemplateFunctionRefId,
         [Parameter(Mandatory = $false)]
-        [Nullable[int]]$ServiceImpactTypeId = $null,
-        [Parameter(Mandatory = $false)]
-        [Nullable[int]]$ResourceOwningServiceRefId = $null
+        [Nullable[int]]$ServiceImpactTypeId = $null
     )
 
     # NORMALIZED: Compute ReferenceType using proper foreign key relationships
@@ -797,11 +795,11 @@ function Add-IndirectConfigReferenceRecord {
     $indirectRefId = $script:IndirectRefIdCounter++
     $script:IndirectConfigReferences[$indirectRefId] = [PSCustomObject]@{
         IndirectRefId = $indirectRefId                          # Primary key
+        TestFunctionStepRefId = $TestFunctionStepRefId          # Foreign key to TestFunctionSteps
         TemplateReferenceRefId = $TemplateReferenceRefId        # Foreign key to TemplateReferences
         SourceTemplateFunctionRefId = $SourceTemplateFunctionRefId  # Foreign key to TemplateFunctions
         ReferenceTypeId = $referenceTypeId                      # Foreign key to ReferenceTypes (normalized!)
         ServiceImpactTypeId = $ServiceImpactTypeId              # Foreign key to ReferenceTypes for service impact
-        ResourceOwningServiceRefId = $ResourceOwningServiceRefId # Foreign key to Services - resource's owning service
     }
 
     return $indirectRefId
@@ -843,46 +841,6 @@ function Add-TemplateFunctionRecord {
     }
 
     return $templateFunctionRefId
-}
-
-function Add-TemplateCallRecord {
-    <#
-    .SYNOPSIS
-    Add a template function call record for fast dependency lookups
-
-    .PARAMETER CallerTemplateFunctionRefId
-    Foreign key to TemplateFunctions - the function making the call
-
-    .PARAMETER CalledName
-    The name being called (struct name, function name, etc.)
-
-    .PARAMETER CallType
-    Type of call: 'struct', 'function', 'variable', etc.
-
-    .PARAMETER LineNumber
-    Line number where the call occurs (optional)
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$CallerTemplateFunctionRefId,
-        [Parameter(Mandatory = $true)]
-        [string]$CalledName,
-        [Parameter(Mandatory = $true)]
-        [string]$CallType,
-        [Parameter(Mandatory = $false)]
-        [int]$LineNumber = 0
-    )
-
-    $templateCallRefId = $script:TemplateCallRefIdCounter++
-    $script:TemplateCalls[$templateCallRefId] = [PSCustomObject]@{
-        TemplateCallRefId = $templateCallRefId
-        CallerTemplateFunctionRefId = $CallerTemplateFunctionRefId
-        CalledName = $CalledName
-        CallType = $CallType
-        LineNumber = $LineNumber
-    }
-
-    return $templateCallRefId
 }
 
 #region AST-Optimized Functions (Phase 1)
@@ -1160,6 +1118,50 @@ function Get-TestFunctionById {
     return $null
 }
 
+function Get-TestFunctionByName {
+    <#
+    .SYNOPSIS
+    Get test functions by function name (O(1) index-based lookup)
+
+    .PARAMETER FunctionName
+    The function name to search for
+
+    .RETURNS
+    First matching test function record (prioritizes non-external records), or $null if not found
+
+    .DESCRIPTION
+    This function uses O(1) index lookup to find test functions by name. If multiple records exist
+    with the same name (e.g., one external stub and one actual function), it returns the actual
+    function (FileRefId != 0) first.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FunctionName
+    )
+
+    # O(1) index lookup - returns array of TestFunctionRefIds
+    if (-not $script:TestFunctionsByNameIndex.ContainsKey($FunctionName)) {
+        return $null
+    }
+
+    $functionRefIds = $script:TestFunctionsByNameIndex[$FunctionName]
+
+    # If multiple records exist, prioritize non-external (FileRefId != 0)
+    foreach ($refId in $functionRefIds) {
+        $func = $script:TestFunctionsByIdIndex[$refId]
+        if ($func.FileRefId -ne 0) {
+            return $func  # Return actual function first
+        }
+    }
+
+    # If no actual function found, return first match (external stub)
+    if ($functionRefIds.Count -gt 0) {
+        return $script:TestFunctionsByIdIndex[$functionRefIds[0]]
+    }
+
+    return $null
+}
+
 function Get-SequentialReferences {
     <#
     .SYNOPSIS
@@ -1169,19 +1171,6 @@ function Get-SequentialReferences {
     Returns all sequential reference records that link referenced functions to their entry points
     #>
     return $script:SequentialReferences.Values
-}
-
-function Get-FunctionBodyFromStruct {
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$StructRefId
-    )
-
-    $struct = $script:Structs[$StructRefId]  # Renamed table
-    if ($struct) {
-        return [string]$struct.FunctionBody
-    }
-    return ""
 }
 
 function Get-Structs {
@@ -1224,63 +1213,6 @@ function Get-StructRefIdByName {
     return $null
 }
 
-function Update-CrossFileStructReferences {
-    <#
-    .SYNOPSIS
-    Resolve cross-file struct references using JOIN-like operations - OPTIMIZED
-    .DESCRIPTION
-    Updates TestFunctions records that have null StructRefId but contain
-    struct patterns in their FunctionBody by matching struct names to the global Structs table.
-    OPTIMIZATION: Uses hashtable lookup (O(1)) instead of linear search (O(N)) for massive performance improvement.
-    #>
-
-    $updatedCount = 0
-
-    # OPTIMIZATION: Build hashtable lookup once for O(1) struct name -> StructRefId mapping
-    $structNameLookup = @{}
-    foreach ($struct in $script:Structs.Values) {
-        $structNameLookup[$struct.StructName] = $struct.StructRefId
-    }
-    Write-Verbose "Built struct name lookup table with $($structNameLookup.Count) entries"
-
-    # Get all test functions with null StructRefId
-    $functionsNeedingStructs = $script:TestFunctions.Values | Where-Object {
-        [string]::IsNullOrEmpty($_.StructRefId) -or $_.StructRefId -eq "0" -or $_.StructRefId -eq 0
-    }
-
-    Write-Verbose "Processing $($functionsNeedingStructs.Count) functions needing struct references"
-
-    foreach ($testFunction in $functionsNeedingStructs) {
-        # Re-extract struct name from function body
-        $structInstantiationPattern = '(?:^|\s)(?:\w+)\s*:=\s*(?:&)?([A-Z][A-Za-z0-9_]*)\s*\{\}'
-        $structMethodCallPattern = '([A-Z][A-Za-z0-9_]*)\{\}\.'
-
-        $structName = $null
-
-        # Check assignment pattern first
-        if ($testFunction.FunctionBody -match $structInstantiationPattern) {
-            $structName = $matches[1]
-        }
-        # Check method call pattern
-        elseif ($testFunction.FunctionBody -match $structMethodCallPattern) {
-            $structName = $matches[1]
-        }
-
-        if ($structName) {
-            # OPTIMIZATION: O(1) hashtable lookup instead of O(N) linear search
-            if ($structNameLookup.ContainsKey($structName)) {
-                $structRefId = $structNameLookup[$structName]
-                # Update the test function record
-                $testFunction.StructRefId = $structRefId
-                $updatedCount++
-            }
-        }
-    }
-
-    Write-Verbose "Updated $updatedCount test functions with cross-file struct references"
-    return $updatedCount
-}
-
 function Get-DirectResourceReferences {
     return $script:DirectResourceReferences.Values
 }
@@ -1304,39 +1236,6 @@ function Get-Files {
     return $script:Files.Values
 }
 
-function Get-FileContent {
-    <#
-    .SYNOPSIS
-        Retrieve file content from the database by full file path
-
-    .PARAMETER FullPath
-        Full file path to retrieve content for
-
-    .RETURNS
-        File content string, or $null if not found
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$FullPath
-    )
-
-    # Convert to relative path for database lookup
-    if (-not $script:RepositoryPath) {
-        Write-Warning "RepositoryPath not set in Database module"
-        return $null
-    }
-
-    $relativePath = $FullPath.Replace($script:RepositoryPath, "").TrimStart('\').Replace("\", "/")
-
-    # Use O(1) index lookup instead of linear search
-    if ($script:FilePathToRefIdIndex.ContainsKey($relativePath)) {
-        $fileRefId = $script:FilePathToRefIdIndex[$relativePath]
-        return Get-FileContentByRefId -FileRefId $fileRefId
-    }
-
-    return $null
-}
-
 function Get-FileRefIdByPath {
     <#
     .SYNOPSIS
@@ -1355,32 +1254,6 @@ function Get-FileRefIdByPath {
 
     if ($script:FilePathToRefIdIndex.ContainsKey($FilePath)) {
         return $script:FilePathToRefIdIndex[$FilePath]
-    }
-
-    return $null
-}
-
-function Get-FileContentByRefId {
-    <#
-    .SYNOPSIS
-        Retrieve file content from the database by FileRefId (O(1) lookup)
-
-    .PARAMETER FileRefId
-        FileRefId to retrieve content for
-
-    .RETURNS
-        File content string, or $null if not found
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$FileRefId
-    )
-
-    if ($script:Files.ContainsKey($FileRefId)) {
-        $fileRecord = $script:Files[$FileRefId]
-        if ($fileRecord -and $fileRecord.FileContent) {
-            return $fileRecord.FileContent
-        }
     }
 
     return $null
@@ -1432,77 +1305,7 @@ function Get-FileRecordByRefId {
     return $null
 }
 
-function Get-FileContentForTestFunction {
-    <#
-    .SYNOPSIS
-        Get file content for a test function using foreign key relationship (O(1) lookup)
-
-    .PARAMETER TestFunctionRefId
-        TestFunctionRefId to get file content for
-
-    .RETURNS
-        File content string, or $null if not found
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TestFunctionRefId
-    )
-
-    if ($script:TestFunctions.ContainsKey($TestFunctionRefId)) {
-        $testFunction = $script:TestFunctions[$TestFunctionRefId]
-        return Get-FileContentByRefId -FileRefId $testFunction.FileRefId
-    }
-
-    return $null
-}
-
-function Get-FileContentForTemplateFunction {
-    <#
-    .SYNOPSIS
-        Get file content for a template function using foreign key relationship (O(1) lookup)
-
-    .PARAMETER TemplateFunctionRefId
-        TemplateFunctionRefId to get file content for
-
-    .RETURNS
-        File content string, or $null if not found
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TemplateFunctionRefId
-    )
-
-    if ($script:TemplateFunctions.ContainsKey($TemplateFunctionRefId)) {
-        $templateFunction = $script:TemplateFunctions[$TemplateFunctionRefId]
-        return Get-FileContentByRefId -FileRefId $templateFunction.FileRefId
-    }
-
-    return $null
-}
-
-function Get-FileContentForStruct {
-    <#
-    .SYNOPSIS
-        Get file content for a struct using foreign key relationship (O(1) lookup)
-
-    .PARAMETER StructRefId
-        StructRefId to get file content for
-
-    .RETURNS
-        File content string, or $null if not found
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$StructRefId
-    )
-
-    if ($script:Structs.ContainsKey($StructRefId)) {
-        $struct = $script:Structs[$StructRefId]
-        return Get-FileContentByRefId -FileRefId $struct.FileRefId
-    }
-
-    return $null
-}function Get-Services {
+function Get-Services {
     return $script:Services.Values
 }
 
@@ -1536,14 +1339,6 @@ function Get-ServiceRefIdByFilePath {
 
 function Get-TemplateFunctions {  # Renamed from Get-TestConfiguration
     return $script:TemplateFunctions.Values  # Renamed table
-}
-
-function Get-TemplateCalls {
-    <#
-    .SYNOPSIS
-    Get all template function call records for dependency analysis
-    #>
-    return $script:TemplateCalls.Values
 }
 
 function Get-ExportDirectory {
@@ -1654,8 +1449,8 @@ function Export-DatabaseToCSV {
                 Line = $null
                 FunctionName = ""
                 TestPrefix = ""
+                ReferenceTypeRefId = 0
                 SequentialEntryPointRefId = 0
-                FunctionBody = ""
             }
             TestSteps = @{
                 TestStepRefId = $null  # Primary key
@@ -1678,6 +1473,7 @@ function Export-DatabaseToCSV {
             }
             IndirectConfigReferences = @{
                 IndirectRefId = $null
+                TestFunctionStepRefId = $null
                 TemplateReferenceRefId = $null
                 SourceTemplateFunctionRefId = $null
                 ReferenceTypeId = $null
@@ -1690,7 +1486,6 @@ function Export-DatabaseToCSV {
                 StructRefId = $null
                 FileRefId = $null
                 Line = $null
-                FunctionBody = ""
                 ReceiverVariable = ""
             }
             SequentialReferences = @{
@@ -1960,7 +1755,6 @@ function Import-DatabaseFromCSV {
     $script:DirectResourceReferences.Clear()
     $script:IndirectConfigReferences.Clear()
     $script:TemplateFunctions.Clear()
-    $script:TemplateCalls.Clear()
     $script:SequentialReferences.Clear()
     $script:TemplateReferences.Clear()
 
@@ -2107,8 +1901,8 @@ function Import-DatabaseFromCSV {
                 Line = $line
                 FunctionName = $row.FunctionName
                 TestPrefix = $row.TestPrefix
+                ReferenceTypeRefId = if ($row.ReferenceTypeRefId) { [int]$row.ReferenceTypeRefId } else { 0 }
                 SequentialEntryPointRefId = $sequentialEntryPointRefId
-                FunctionBody = $row.FunctionBody
             }
             $script:TestFunctions[$testFunctionRefId] = $testFunc
 
@@ -2193,7 +1987,6 @@ function Import-DatabaseFromCSV {
             $sourceTemplateFunctionRefId = if ($row.SourceTemplateFunctionRefId) { [int]$row.SourceTemplateFunctionRefId } else { 0 }
             $referenceTypeId = if ($row.ReferenceTypeId) { [int]$row.ReferenceTypeId } else { 0 }
             $serviceImpactTypeId = if ($row.ServiceImpactTypeId) { [int]$row.ServiceImpactTypeId } else { 0 }
-            $resourceOwningServiceRefId = if ($row.ResourceOwningServiceRefId) { [int]$row.ResourceOwningServiceRefId } else { $null }
 
             $script:IndirectConfigReferences[$indirectRefId] = [PSCustomObject]@{
                 IndirectRefId = $indirectRefId
@@ -2201,7 +1994,6 @@ function Import-DatabaseFromCSV {
                 SourceTemplateFunctionRefId = $sourceTemplateFunctionRefId
                 ReferenceTypeId = $referenceTypeId
                 ServiceImpactTypeId = $serviceImpactTypeId
-                ResourceOwningServiceRefId = $resourceOwningServiceRefId
             }
             # Update counter
             if ($indirectRefId -ge $script:IndirectRefIdCounter) {
@@ -2227,7 +2019,6 @@ function Import-DatabaseFromCSV {
                 StructRefId = $structRefId
                 FileRefId = $fileRefId
                 Line = $line
-                FunctionBody = $row.FunctionBody
                 ReceiverVariable = $row.ReceiverVariable
             }
             # Update counter
@@ -2367,7 +2158,6 @@ Export-ModuleMember -Function @(
     'Add-DirectResourceReferenceRecord',
     'Add-IndirectConfigReferenceRecord',
     'Add-TemplateFunctionRecord',
-    'Add-TemplateCallRecord',  # New function for call lookup table
     'Add-TemplateCallChainRecord',  # AST-based template call chain record
     'Add-SequentialReferenceRecord',
     'Add-TemplateReferenceRecord',
@@ -2377,29 +2167,22 @@ Export-ModuleMember -Function @(
     # Data retrieval functions
     'Get-TestFunctions',
     'Get-TestFunctionById',
+    'Get-TestFunctionByName',
     'Get-SequentialReferences',
     'Get-ReferenceTypes',
     'Get-Structs',
     'Get-StructRefIdByName',
-    'Update-CrossFileStructReferences',
     'Get-DirectResourceReferences',
     'Get-IndirectConfigReferences',
     'Get-Files',
-    'Get-FileContent',
     'Get-FileRefIdByPath',           # O(1) lookup by FilePath (indexed)
-    'Get-FileContentByRefId',        # O(1) lookup by FileRefId
     'Get-FilePathByRefId',           # O(1) lookup by FileRefId
     'Get-FileRecordByRefId',         # O(1) lookup by FileRefId
-    'Get-FileContentForTestFunction',    # O(1) lookup via FK relationship
-    'Get-FileContentForTemplateFunction', # O(1) lookup via FK relationship
-    'Get-FileContentForStruct',      # O(1) lookup via FK relationship
     'Get-Services',
     'Get-ServiceRefIdByFilePath',
     'Get-TemplateFunctions',
-    'Get-TemplateCalls',  # New function for call lookup table
     'Get-TemplateReferences',
     'Get-StructsByFileRefId',
-    'Get-FunctionBodyFromStruct',
     'Get-ReferenceTypeName',
     'Get-ReferenceTypeId'
 ) -Variable @(

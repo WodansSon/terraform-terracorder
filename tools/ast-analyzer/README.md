@@ -29,40 +29,55 @@ Use the PowerShell build script (uses Windows Go installation):
 .\Build.ps1 help
 ```
 
-### WSL Users
+### WSL Users (Windows Subsystem for Linux)
 
-If you have Go installed in WSL, you can use Make from within a WSL terminal:
+If you have Go installed in WSL, you can build from within a WSL terminal:
 
 ```bash
-# Open a WSL terminal, then navigate to the directory
+# First, enter WSL shell
+wsl
+
+# Navigate to the ast-analyzer directory
 cd /mnt/c/github.com/WodansSon/terraform-terracorder/tools/ast-analyzer
 
-# Build the binary
-make
+# Build the binary using GNUmakefile
+make -f GNUmakefile
 
-# Clean and rebuild
-make rebuild
+# Or clean and rebuild
+make -f GNUmakefile rebuild
 
 # Show help
-make help
+make -f GNUmakefile help
 ```
 
-**Note**: You must be **inside** a WSL terminal (Windows Terminal with WSL profile, or run `wsl` with no args to enter). Running `wsl make` directly from PowerShell won't work due to PATH issues.
+**Important Notes:**
+- You **must** run `wsl` first to enter the WSL shell - don't run `wsl make` directly from PowerShell
+- Use `make -f GNUmakefile` to explicitly specify the makefile
+- Building from WSL creates a **Linux binary** (`ast-analyzer`), not a Windows binary (`ast-analyzer.exe`)
+- To build for Windows, use the PowerShell script `.\Build.ps1` or use `make -f GNUmakefile build-all` for cross-compilation
+- The WSL binary won't run in Windows PowerShell - it only runs inside WSL
 
-**Important**: Building from WSL creates a Linux binary (`ast-analyzer`) not a Windows binary (`ast-analyzer.exe`). To build for Windows, use the PowerShell script or `make build-all` for cross-compilation.
+### Linux/macOS Users
 
-### Linux/macOS
-
-Use Make:
+Use Make with the GNUmakefile:
 ```bash
-# Build the binary
-make
+# Navigate to the ast-analyzer directory
+cd tools/ast-analyzer
 
-# Clean and rebuild
-make rebuild
+# Build the binary
+make -f GNUmakefile
+
+# Or clean and rebuild
+make -f GNUmakefile rebuild
 
 # See all available targets
-make help
+make -f GNUmakefile help
+```
+
+**Tip**: On some systems, you can use `gmake` (GNU Make) directly:
+```bash
+gmake build
+gmake rebuild
 ```
 
 ### Using Go Directly (All Platforms)

@@ -251,10 +251,26 @@ function Build-LegacyReferenceTablesFromTestSteps {
     The AST schema uses TestSteps with direct FK relationships, but the original
     blast radius analysis expects TemplateReferences and IndirectConfigReferences tables.
     This function generates those legacy tables from the modern TestSteps data.
+
+    IMPORTANT: This function is called multiple times (Phase 2, Phase 2.5), so it only
+    processes NEW test steps that haven't been converted yet (prevents duplicates).
     #>
 
+    # Track which steps have been processed (prevents duplicates across multiple Import-ASTOutput calls)
+    if ($null -eq $script:LastProcessedTestStepRefId) {
+        $script:LastProcessedTestStepRefId = 0
+    }
+
     # Get all test steps
-    $testSteps = Get-AllTestFunctionSteps
+    $allTestSteps = Get-AllTestFunctionSteps
+
+    # Filter to only NEW steps (not yet processed)
+    $testSteps = $allTestSteps | Where-Object { $_.TestStepRefId -gt $script:LastProcessedTestStepRefId }
+
+    if ($testSteps.Count -eq 0) {
+        # No new steps to process
+        return
+    }
 
     # Get test functions and template functions for lookups
     $testFunctions = Get-TestFunctions
@@ -303,9 +319,15 @@ function Build-LegacyReferenceTablesFromTestSteps {
 
         # Add indirect reference
         [void](Add-IndirectConfigReferenceRecord `
+            -TestFunctionStepRefId $step.TestStepRefId `
             -TemplateReferenceRefId $templateRefId `
             -SourceTemplateFunctionRefId $step.TemplateFunctionRefId `
             -ServiceImpactTypeId $serviceImpactTypeId)
+
+        # Update last processed ID to prevent reprocessing this step
+        if ($step.TestStepRefId -gt $script:LastProcessedTestStepRefId) {
+            $script:LastProcessedTestStepRefId = $step.TestStepRefId
+        }
     }
 }
 
@@ -384,7 +406,7 @@ function Import-ASTOutput {
 
         # Show progress every 50 files or at the end
         if ($pass1Counter % 50 -eq 0 -or $pass1Counter -eq $totalResults) {
-            Show-InlineProgress -Current $pass1Counter -Total $totalResults -Activity "Pass 1 - Importing functions"
+            Show-InlineProgress -Current $pass1Counter -Total $totalResults -Activity "  Importing functions"
         }
 
         if (-not $result.Success) {
@@ -440,7 +462,7 @@ function Import-ASTOutput {
     }
 
     # Show Pass 1 completion
-    Show-InlineProgress -Current $totalResults -Total $totalResults -Activity "Pass 1 - Importing functions" -Completed
+    Show-InlineProgress -Current $totalResults -Total $totalResults -Activity "  Importing functions" -Completed
 
     # Pass 2: Import test steps, template calls, sequential references, and direct resource references using global lookups
     $pass2Counter = 0
@@ -451,7 +473,7 @@ function Import-ASTOutput {
 
         # Show progress every 50 files or at the end
         if ($pass2Counter % 50 -eq 0 -or $pass2Counter -eq $totalFileData) {
-            Show-InlineProgress -Current $pass2Counter -Total $totalFileData -Activity "Pass 2 - Importing references"
+            Show-InlineProgress -Current $pass2Counter -Total $totalFileData -Activity "  Importing references"
         }
 
         try {
@@ -483,7 +505,7 @@ function Import-ASTOutput {
     }
 
     # Show Pass 2 completion
-    Show-InlineProgress -Current $totalFileData -Total $totalFileData -Activity "Pass 2 - Importing references" -Completed
+    Show-InlineProgress -Current $totalFileData -Total $totalFileData -Activity "  Importing references" -Completed
 
     # Pass 3: Generate TemplateReferences and IndirectConfigReferences from TestSteps
     # This populates the legacy tables needed for blast radius analysis
@@ -547,14 +569,36 @@ function Import-SequentialReferencesFromAST {
             }
         }
 
-        # If still not found, create a stub record for external reference
+        # If still not found, check if this function exists in the global TestFunctions table
+        # (it might have been imported in Phase 2, but we're now in Phase 2.5 discovering sequential refs)
         if (-not $referencedFuncId) {
-            # Create stub test function record with Line=0 to indicate external reference
+            $existingFunc = Get-TestFunctionByName -FunctionName $seqRef.referenced_function
+            if ($existingFunc -and $existingFunc.FileRefId -ne 0) {
+                # Found the actual function - use its RefId instead of creating a stub
+                $referencedFuncId = $existingFunc.TestFunctionRefId
+
+                # Add to lookup for future references in this import session
+                $lookupKey = "$($existingFunc.FileRefId)`:$($seqRef.referenced_function)"
+                $TestFunctionIds[$lookupKey] = $referencedFuncId
+            }
+        }
+
+        # If still not found after checking global table, create a stub record for truly external reference
+        if (-not $referencedFuncId) {
+            # Calculate actual test prefix even for external functions
+            $testPrefix = if ($seqRef.referenced_function -match '_') {
+                ($seqRef.referenced_function -split '_')[0] + '_'
+            } else {
+                $seqRef.referenced_function
+            }
+
+            # Create stub test function record with FileRefId=0 and ReferenceTypeRefId=10 (EXTERNAL_REFERENCE)
             $referencedFuncId = Add-TestFunctionRecord `
                 -FileRefId 0 `
                 -StructRefId $null `
                 -FunctionName $seqRef.referenced_function `
-                -TestPrefix "EXTERNAL" `
+                -TestPrefix $testPrefix `
+                -ReferenceTypeRefId 10 `
                 -Line 0
 
             # Add to lookup for future references

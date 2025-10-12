@@ -102,7 +102,10 @@ function Set-IndirectConfigReferencesRelational {
 
             foreach ($templateFunc in $matchingTemplateFunctions) {
                 # Add indirect config reference record using proper foreign keys
-                $indirectRefId = Add-IndirectConfigReferenceRecord -TemplateReferenceRefId $templateRef.TemplateReferenceRefId -SourceTemplateFunctionRefId $templateFunc.TemplateFunctionRefId
+                $indirectRefId = Add-IndirectConfigReferenceRecord `
+                    -TestFunctionStepRefId $templateRef.TestFunctionStepRefId `
+                    -TemplateReferenceRefId $templateRef.TemplateReferenceRefId `
+                    -SourceTemplateFunctionRefId $templateFunc.TemplateFunctionRefId
 
                 if ($indirectRefId) {
                     $recordCount++

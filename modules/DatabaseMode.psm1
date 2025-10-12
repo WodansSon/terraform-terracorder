@@ -10,7 +10,6 @@ $script:ARROW_CHAR = [char]0x2192  # Unicode Right Arrow Character
 # ============================================================================
 # MODULE STATE: Cache for loaded data tables
 # ============================================================================
-$script:allTemplateCalls = $null  # Cache for TemplateCalls.csv data
 $script:DatabaseDirectory = $null  # Store database directory for context
 
 # ============================================================================
@@ -45,129 +44,8 @@ $script:CompiledRegex = @{
 }
 
 # ============================================================================
-# HELPER FUNCTIONS: Call Chain Tracing
+# VISUALIZATION FUNCTIONS
 # ============================================================================
-
-function Get-TemplateCalls {
-    <#
-    .SYNOPSIS
-    Load and cache TemplateCalls data from CSV for call chain analysis
-
-    .PARAMETER DatabaseDirectory
-    Directory containing TemplateCalls.csv
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$DatabaseDirectory
-    )
-
-    # Return cached data if already loaded
-    if ($null -ne $script:allTemplateCalls) {
-        return $script:allTemplateCalls
-    }
-
-    $templateCallsPath = Join-Path $DatabaseDirectory "TemplateCalls.csv"
-    if (Test-Path $templateCallsPath) {
-        $script:allTemplateCalls = Import-Csv $templateCallsPath
-        return $script:allTemplateCalls
-    }
-
-    # Return empty array if file doesn't exist (older database)
-    $script:allTemplateCalls = @()
-    return $script:allTemplateCalls
-}
-
-function Get-CallChainDepth {
-    <#
-    .SYNOPSIS
-    Calculate the depth of nested calls from a template function
-
-    .PARAMETER TemplateFunctionRefId
-    The template function to analyze
-
-    .PARAMETER TemplateCalls
-    Array of TemplateCall records
-
-    .PARAMETER MaxDepth
-    Maximum depth to traverse (default: 5)
-
-    .RETURNS
-    Integer representing call chain depth (1 = no nested calls, 5 = deep nesting)
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TemplateFunctionRefId,
-        [Parameter(Mandatory = $true)]
-        [array]$TemplateCalls,
-        [Parameter(Mandatory = $false)]
-        [int]$MaxDepth = 5
-    )
-
-    # Get calls made by this function
-    $callsMade = @($TemplateCalls | Where-Object {
-        [int]$_.CallerTemplateFunctionRefId -eq $TemplateFunctionRefId
-    })
-
-    if ($callsMade.Count -eq 0) {
-        return 0  # No nested calls
-    }
-
-    # If we've hit max depth, return current depth
-    if ($MaxDepth -le 1) {
-        return 1
-    }
-
-    # Recursively check depth of called functions
-    $maxChildDepth = 0
-    foreach ($call in $callsMade) {
-        # Only recurse for function calls, not struct instantiations
-        if ($call.CallType -eq 'function') {
-            # Find the called function by name (would need to enhance to track by RefId)
-            # For now, count this as 1 level
-            $maxChildDepth = [Math]::Max($maxChildDepth, 1)
-        }
-    }
-
-    return 1 + $maxChildDepth
-}
-
-function Get-NestedCallsInfo {
-    <#
-    .SYNOPSIS
-    Get information about nested calls for display
-
-    .PARAMETER TemplateFunctionRefId
-    The template function to analyze
-
-    .PARAMETER TemplateCalls
-    Array of TemplateCall records
-
-    .RETURNS
-    PSCustomObject with call information
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TemplateFunctionRefId,
-        [Parameter(Mandatory = $true)]
-        [array]$TemplateCalls
-    )
-
-    # Get calls made by this function
-    $callsMade = @($TemplateCalls | Where-Object {
-        [int]$_.CallerTemplateFunctionRefId -eq $TemplateFunctionRefId
-    })
-
-    $functionCalls = @($callsMade | Where-Object { $_.CallType -eq 'function' })
-    $structCalls = @($callsMade | Where-Object { $_.CallType -eq 'struct' })
-
-    return [PSCustomObject]@{
-        TotalCalls = $callsMade.Count
-        FunctionCalls = $functionCalls.Count
-        StructCalls = $structCalls.Count
-        FunctionNames = ($functionCalls | Select-Object -ExpandProperty CalledName -Unique)
-        HasNestedCalls = ($callsMade.Count -gt 0)
-    }
-}
 
 function Show-DatabaseStatistics {
     <#
@@ -517,6 +395,126 @@ function Show-TemplateFunctionDependencies {
             $functionGroups[$funcId] = @{
                 TestFunc = $refInfo.TestFunc
                 Steps = @()
+                StepKeys = @{}  # Track unique steps to prevent duplicates
+                ServiceImpactTypeName = $refInfo.ServiceImpactTypeName
+                ResourceOwningServiceName = $refInfo.ResourceOwningServiceName
+                SourceTemplateFunction = $refInfo.SourceTemplateFunction
+            }
+        }
+
+        # Deduplicate steps - same TestFunctionStep + TemplateRef + Struct = duplicate IndirectConfigReference
+        $stepKey = "$($refInfo.TestFuncStep.TestFunctionStepRefId)-$($refInfo.TemplateRef.TemplateReferenceRefId)"
+        if ($refInfo.SourceTemplateFunction) {
+            $stepKey += "-$($refInfo.SourceTemplateFunction.StructRefId)"
+        }
+
+        if (-not $functionGroups[$funcId].StepKeys.ContainsKey($stepKey)) {
+            $functionGroups[$funcId].StepKeys[$stepKey] = $true
+            $functionGroups[$funcId].Steps += $refInfo
+        }
+    }
+
+    # Sort by test function line number
+    $sortedFunctions = $functionGroups.Values | Sort-Object { $_.TestFunc.Line }
+    $currentFunctionIndex = 0
+
+    foreach ($funcGroup in $sortedFunctions) {
+        $currentFunctionIndex++
+
+        # Add blank line between functions (not before first)
+        if ($currentFunctionIndex -gt 1) {
+            Write-Host ""
+        }
+
+        # Function name
+        Write-HostRGB "     Function: " $colors.Highlight -NoNewline
+        Write-HostRGB "$($funcGroup.TestFunc.Line)" $colors.LineNumber -NoNewline
+        Write-HostRGB ": " $colors.Highlight -NoNewline
+        Write-HostRGB "$($funcGroup.TestFunc.FunctionName)" $colors.Function
+
+        # Show service context - only for cross-service references
+        if ($executingServiceName -ne $funcGroup.ResourceOwningServiceName) {
+            # Cross-service - show which service this test belongs to
+            Write-HostRGB "               Service: " $colors.Highlight -NoNewline
+            Write-HostRGB "$executingServiceName" $colors.Type
+        }
+
+        # Display steps (sorted by step index)
+        $sortedSteps = $funcGroup.Steps | Sort-Object { $_.TestFuncStep.StepIndex }
+        # Calculate max step index width for alignment
+        $maxStepWidth = ($sortedSteps | ForEach-Object { $_.TestFuncStep.StepIndex.ToString().Length } | Measure-Object -Maximum).Maximum
+        foreach ($stepInfo in $sortedSteps) {
+            $stepNumStr = $stepInfo.TestFuncStep.StepIndex.ToString().PadLeft($maxStepWidth)
+            Write-HostRGB "               Step " $colors.Highlight -NoNewline
+            Write-Host "$stepNumStr" -ForegroundColor $NumberColor -NoNewline
+            Write-HostRGB ": " $colors.Highlight -NoNewline
+            Write-HostRGB "Config" $colors.Highlight -NoNewline
+            Write-HostRGB ": " $colors.Label -NoNewline
+            Write-HostRGB "$($stepInfo.TemplateRef.TemplateVariable)" $colors.Variable -NoNewline
+            Write-HostRGB "." $colors.Label -NoNewline
+            Write-HostRGB "$($stepInfo.TemplateRef.TemplateMethod)" $colors.Function
+        }
+    }
+}
+
+function Show-SequentialCallChain {
+    <#
+    .SYNOPSIS
+    Display test configuration function dependencies (template references)
+
+    .PARAMETER TemplateRefs
+    Array of template reference info objects
+
+    .PARAMETER FilePath
+    The file path being processed
+
+    .PARAMETER NumberColor
+    Color for numbers in output
+
+    .PARAMETER ItemColor
+    Color for item types in output
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$TemplateRefs,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $false)]
+        [string]$NumberColor = "Yellow",
+
+        [Parameter(Mandatory = $false)]
+        [string]$ItemColor = "Cyan"
+    )
+
+    if ($TemplateRefs.Count -eq 0) {
+        return
+    }
+
+    Write-Host ""
+    Write-Separator -Indent 3
+    Write-Host "     Test Configuration Function Dependencies:" -ForegroundColor $ItemColor
+    Write-Separator -Indent 3
+
+    # Get VS Code color scheme for function highlighting
+    $colors = Get-VSCodeSyntaxColors
+
+    # Get executing service name from the file path (e.g., internal/services/recoveryservices/...)
+    $executingServiceName = "unknown"
+    $match = $script:CompiledRegex.ServicePath.Match($FilePath)
+    if ($match.Success) {
+        $executingServiceName = $match.Groups[1].Value
+    }
+
+    # Group by test function to consolidate steps
+    $functionGroups = @{}
+    foreach ($refInfo in $TemplateRefs) {
+        $funcId = $refInfo.TestFunc.TestFunctionRefId
+        if (-not $functionGroups.ContainsKey($funcId)) {
+            $functionGroups[$funcId] = @{
+                TestFunc = $refInfo.TestFunc
+                Steps = @()
                 ServiceImpactTypeName = $refInfo.ServiceImpactTypeName
                 ResourceOwningServiceName = $refInfo.ResourceOwningServiceName
                 SourceTemplateFunction = $refInfo.SourceTemplateFunction
@@ -668,41 +666,9 @@ function Show-TemplateFunctionDependencies {
                     }
                 }
 
-                # Load TemplateCalls for call chain depth analysis
-                if ($null -eq $script:allTemplateCalls) {
-                    $dbDir = Get-ExportDirectory
-                    if (-not $dbDir) {
-                        # Fallback: try to determine database directory from current context
-                        # This should be set by the calling context
-                        $dbDir = $script:DatabaseDirectory
-                    }
-                    if ($dbDir) {
-                        $templateCallsPath = Join-Path $dbDir "TemplateCalls.csv"
-                        if (Test-Path $templateCallsPath) {
-                            $script:allTemplateCalls = Import-Csv $templateCallsPath
-                        } else {
-                            $script:allTemplateCalls = @()
-                        }
-                    } else {
-                        $script:allTemplateCalls = @()
-                    }
-                }
-
                 # Get the struct that owns the source template function (the template being called)
                 # Use hashtable lookup instead of Where-Object for O(1) performance
                 $calledTemplateStruct = $script:structsByRefId[$stepTemplateFunction.StructRefId]
-
-                # Get call depth info for this template function
-                $callInfo = Get-NestedCallsInfo `
-                    -TemplateFunctionRefId $stepTemplateFunction.TemplateFunctionRefId `
-                    -TemplateCalls $script:allTemplateCalls
-
-                $depthIndicator = ""
-                if ($callInfo.HasNestedCalls) {
-                    if ($callInfo.FunctionCalls -gt 0) {
-                        $depthIndicator = " [+$($callInfo.FunctionCalls) deeper]"
-                    }
-                }
 
                 # Define box-drawing characters (matching sequential test style)
                 $tee = [char]0x251C       # (branch continues)
@@ -717,7 +683,7 @@ function Show-TemplateFunctionDependencies {
                     $_.FileRefId -eq $sourceFileRefId
                 } | Select-Object -First 10  # Get more for complete picture
 
-                # Get the specific resource we're analyzing (via ResourceOwningServiceRefId)
+                # Get the specific resource we're analyzing (via Struct -> ResourceRefId)
                 $targetResourceRefId = $null
                 if ($stepTemplateFunction) {
                     # Use hashtable lookup for O(1) performance
@@ -754,16 +720,10 @@ function Show-TemplateFunctionDependencies {
                                     }
                                 }
 
-                                # Get call depth for level 2 function
-                                $level2CallInfo = Get-NestedCallsInfo `
-                                    -TemplateFunctionRefId $templateFunc.TemplateFunctionRefId `
-                                    -TemplateCalls $script:allTemplateCalls
-
                                 $structToFunctions[$struct.StructName] = @{
                                     FunctionName = $templateFunc.TemplateFunctionName
                                     Line = $templateFunc.Line
                                     TemplateFunctionRefId = $templateFunc.TemplateFunctionRefId
-                                    CallInfo = $level2CallInfo
                                     ServiceName = $serviceName
                                 }
                             }
@@ -786,9 +746,6 @@ function Show-TemplateFunctionDependencies {
 
                 # Display the functions that actually use the resource (Level 2 - indented)
                 if ($hasLevel2) {
-                    # Check if any functions have deeper call chains
-                    $hasDeepChains = $false
-
                     $structNames = $structToFunctions.Keys | Sort-Object | Select-Object -First 5
                     $level2Count = $structNames.Count
                     $level2Index = 0
@@ -799,11 +756,6 @@ function Show-TemplateFunctionDependencies {
                         $level2BranchChar = if ($isLastLevel2) { $corner } else { $tee }
 
                         $funcInfo = $structToFunctions[$structName]
-
-                        # Check if this function has nested calls
-                        if ($funcInfo.CallInfo.HasNestedCalls) {
-                            $hasDeepChains = $true
-                        }
 
                         # Indent Level 2 under Level 1 - align with the vertical line from └┬►
                         Write-HostRGB "                  $level2BranchChar$arrow$rarrow " $colors.Highlight -NoNewline
@@ -823,20 +775,11 @@ function Show-TemplateFunctionDependencies {
                         Write-HostRGB "$($funcInfo.FunctionName)" $colors.Function
                     }
                 }
-
-                # Add navigation hint if any functions have deeper call chains
-                if ($hasDeepChains) {
-                    Write-Host ""
-                    Write-HostRGB "                 " $colors.Label -NoNewline
-                    Write-HostRGB "Note: " $colors.Comment -NoNewline
-                    Write-HostRGB "Call chains continue deeper. See " $colors.Comment -NoNewline
-                    Write-HostRGB "$($funcGroup.TestFunc.FunctionName)" $colors.Function -NoNewline
-                    Write-HostRGB " to trace test function call paths.`n" $colors.Comment
-                }
             }
         }
     }
 }
+
 
 function Show-SequentialCallChain {
     <#
@@ -1200,23 +1143,21 @@ function Show-IndirectReferences {
             $serviceImpactTypeName = Get-ReferenceTypeName -ReferenceTypeId $indirectRef.ServiceImpactTypeId
         }
 
-        # Get the resource's owning service name for cross-service references
-        $resourceOwningServiceName = $null
-        if ($indirectRef.PSObject.Properties['ResourceOwningServiceRefId'] -and $indirectRef.ResourceOwningServiceRefId) {
-            $services = Get-Services
-            $resourceOwningServiceName = $services | Where-Object { $_.ServiceRefId -eq $indirectRef.ResourceOwningServiceRefId } | Select-Object -First 1 -ExpandProperty Name
-        }
-
-        # Get the source template function that contains the resource reference (for cross-service chain)
+        # Get the source template function using the foreign key (O(1) hashtable lookup)
         $sourceTemplateFunction = $null
-        if ($indirectRef.PSObject.Properties['SourceTemplateFunctionRefId'] -and $indirectRef.SourceTemplateFunctionRefId) {
-            # Get all template functions if not cached
+        if ($indirectRef.SourceTemplateFunctionRefId) {
+            # Direct O(1) lookup using the hashtable - TemplateFunctions are already indexed by RefId
             if (-not $script:allTemplateFunctions) {
                 $script:allTemplateFunctions = Get-TemplateFunctions
             }
-            $sourceTemplateFunction = $script:allTemplateFunctions | Where-Object {
-                $_.TemplateFunctionRefId -eq $indirectRef.SourceTemplateFunctionRefId
-            } | Select-Object -First 1
+            # Convert array to hashtable on first use for O(1) lookups
+            if (-not $script:templateFunctionsById) {
+                $script:templateFunctionsById = @{}
+                foreach ($tf in $script:allTemplateFunctions) {
+                    $script:templateFunctionsById[$tf.TemplateFunctionRefId] = $tf
+                }
+            }
+            $sourceTemplateFunction = $script:templateFunctionsById[$indirectRef.SourceTemplateFunctionRefId]
         }
 
         # Group by file
