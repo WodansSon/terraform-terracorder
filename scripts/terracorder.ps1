@@ -227,7 +227,7 @@ try {
         $discoveryResult = Get-TestFilesContainingResource -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -UseParallel $true -ThreadCount $Global:ThreadCount -NumberColor $Script:NumberColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
         $relevantFileNames = $discoveryResult.RelevantFiles
 
-        # Convert relative paths to full paths for AST analyzer
+        # Convert relative paths to full paths for Replicode
         $testFiles = $relevantFileNames
 
         Show-PhaseMessageHighlight -Message "Found $($testFiles.Count) Test Files Containing Resource" -HighlightText "$($testFiles.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
@@ -240,16 +240,16 @@ try {
         Show-PhaseHeader -PhaseNumber 2 -PhaseDescription "AST Analysis and Database Import"
         $phase2Start = Get-Date
 
-        # Verify AST analyzer exists
-        $astAnalyzerPath = Join-Path $PSScriptRoot "..\tools\ast-analyzer\ast-analyzer.exe"
-        if (-not (Test-Path $astAnalyzerPath)) {
+        # Verify Replicode exists
+        $replicodePath = Join-Path $PSScriptRoot "..\tools\replicode\replicode.exe"
+        if (-not (Test-Path $replicodePath)) {
             Write-Host ""
-            Show-PhaseMessageHighlight -Message "ERROR: AST analyzer not found at $astAnalyzerPath" -HighlightText "ERROR" -HighlightColor "Red" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-PhaseMessageHighlight -Message "ERROR: Replicode not found at $replicodePath" -HighlightText "ERROR" -HighlightColor "Red" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
             exit 1
         }
 
-        # Run AST analyzer in parallel and import to database
-        Import-ASTOutput -ASTAnalyzerPath $astAnalyzerPath -TestFiles $testFiles -RepoRoot $RepositoryDirectory -ResourceName $ResourceName
+        # Run Replicode in parallel and import to database
+        Import-ASTOutput -ASTAnalyzerPath $replicodePath -TestFiles $testFiles -RepoRoot $RepositoryDirectory -ResourceName $ResourceName
 
         # Phase 2.5: Discover Additional Sequential Test Files
         # After initial import, find files with RunTestsInSequence that reference functions we just imported

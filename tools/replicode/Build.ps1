@@ -1,5 +1,5 @@
 # Build.ps1
-# PowerShell build script for AST analyzer (Windows alternative to Make)
+# PowerShell build script for Replicode (Windows alternative to Make)
 
 param(
     [Parameter(Mandatory = $false)]
@@ -7,17 +7,17 @@ param(
     [string]$Target = "build"
 )
 
-$BinaryName = "ast-analyzer.exe"
+$BinaryName = "replicode.exe"
 $ErrorActionPreference = "Stop"
 
 function Show-Help {
-    Write-Host "TerraCorder AST Analyzer - Build Script" -ForegroundColor Cyan
+    Write-Host "TerraCorder Replicode - Build Script" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "USAGE:" -ForegroundColor Yellow
     Write-Host "  .\Build.ps1 [target]"
     Write-Host ""
     Write-Host "TARGETS:" -ForegroundColor Yellow
-    Write-Host "  build    - Build the AST analyzer binary (default)"
+    Write-Host "  build    - Build the Replicode binary (default)"
     Write-Host "  clean    - Remove build artifacts"
     Write-Host "  rebuild  - Clean and rebuild"
     Write-Host "  test     - Run tests"
@@ -31,7 +31,7 @@ function Show-Help {
 }
 
 function Invoke-Build {
-    Write-Host "Building AST analyzer..." -ForegroundColor Cyan
+    Write-Host "Building Replicode..." -ForegroundColor Cyan
 
     try {
         go build -o $BinaryName -v

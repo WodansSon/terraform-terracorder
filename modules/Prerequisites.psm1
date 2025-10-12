@@ -165,11 +165,11 @@ function Write-PrerequisiteErrors {
     # Specific guidance
     if (-not $GoInfo.IsValid) {
         if (-not $GoInfo.Installed) {
-            Write-Host "Go is required to run the AST analyzer." -ForegroundColor Cyan
+            Write-Host "Go is required to run Replicode." -ForegroundColor Cyan
             Write-Host "Install Go 1.21 or later from: " -ForegroundColor Cyan -NoNewline
             Write-Host "https://go.dev/dl/" -ForegroundColor Yellow
         } else {
-            Write-Host "Go version $($GoInfo.Version) is too old for the AST analyzer." -ForegroundColor Cyan
+            Write-Host "Go version $($GoInfo.Version) is too old for Replicode." -ForegroundColor Cyan
             Write-Host "Upgrade to Go 1.21 or later from: " -ForegroundColor Cyan -NoNewline
             Write-Host "https://go.dev/dl/" -ForegroundColor Yellow
         }

@@ -1,6 +1,6 @@
-# AST Analyzer - Proof of Concept
+# Replicode - Go AST Semantic Parser
 
-This is a simple Go AST (Abstract Syntax Tree) analyzer that demonstrates how we can extract accurate function and call information from Go test files.
+This is a Go AST (Abstract Syntax Tree) analyzer that performs semantic parsing of Go test files for TerraCorder.
 
 ## Purpose
 
@@ -37,8 +37,8 @@ If you have Go installed in WSL, you can build from within a WSL terminal:
 # First, enter WSL shell
 wsl
 
-# Navigate to the ast-analyzer directory
-cd /mnt/c/github.com/WodansSon/terraform-terracorder/tools/ast-analyzer
+# Navigate to the replicode directory
+cd /mnt/c/github.com/WodansSon/terraform-terracorder/tools/replicode
 
 # Build the binary using GNUmakefile
 make -f GNUmakefile
@@ -53,7 +53,7 @@ make -f GNUmakefile help
 **Important Notes:**
 - You **must** run `wsl` first to enter the WSL shell - don't run `wsl make` directly from PowerShell
 - Use `make -f GNUmakefile` to explicitly specify the makefile
-- Building from WSL creates a **Linux binary** (`ast-analyzer`), not a Windows binary (`ast-analyzer.exe`)
+- Building from WSL creates a **Linux binary** (`replicode`), not a Windows binary (`replicode.exe`)
 - To build for Windows, use the PowerShell script `.\Build.ps1` or use `make -f GNUmakefile build-all` for cross-compilation
 - The WSL binary won't run in Windows PowerShell - it only runs inside WSL
 
@@ -61,8 +61,8 @@ make -f GNUmakefile help
 
 Use Make with the GNUmakefile:
 ```bash
-# Navigate to the ast-analyzer directory
-cd tools/ast-analyzer
+# Navigate to the replicode directory
+cd tools/replicode
 
 # Build the binary
 make -f GNUmakefile
@@ -84,10 +84,10 @@ gmake rebuild
 
 ```powershell
 # Windows
-go build -o ast-analyzer.exe
+go build -o replicode.exe
 
 # Linux/macOS/WSL
-go build -o ast-analyzer
+go build -o replicode
 ```
 
 ## Usage
@@ -95,13 +95,13 @@ go build -o ast-analyzer
 Analyze a single test file:
 
 ```powershell
-.\ast-analyzer.exe -file "C:\github.com\hashicorp\terraform-provider-azurerm\internal\services\network\private_endpoint_resource_test.go"
+.\replicode.exe -file "C:\github.com\hashicorp\terraform-provider-azurerm\internal\services\network\private_endpoint_resource_test.go"
 ```
 
 With verbose output:
 
 ```powershell
-.\ast-analyzer.exe -file "path\to\test.go" -verbose -output "output/ast-test"
+.\replicode.exe -file "path\to\test.go" -verbose -output "output/replicode"
 ```
 
 ## Output
@@ -233,12 +233,12 @@ CREATE TABLE Imports (
 Test on the problematic file:
 
 ```powershell
-cd cmd\ast-analyzer
+cd tools\replicode
 go build
-.\ast-analyzer.exe -file "C:\github.com\hashicorp\terraform-provider-azurerm\internal\services\network\private_endpoint_resource_test.go" -output "..\..\output\ast-poc"
+.\replicode.exe -file "C:\github.com\hashicorp\terraform-provider-azurerm\internal\services\network\private_endpoint_resource_test.go" -output "..\..\output\replicode"
 
 # Then examine the CSV files
-Import-Csv "..\..\output\ast-poc\function_calls_ast.csv" |
+Import-Csv "..\..\output\replicode\function_calls_ast.csv" |
     Where-Object { $_.CallerFunction -eq "TestAccPrivateEndpoint_updateTag" } |
     Format-Table Line, ReceiverExpression, MethodName, IsLocalCall
 ```

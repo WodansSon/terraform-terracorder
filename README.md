@@ -17,7 +17,7 @@ A high-performance **AST-based semantic analysis tool** that identifies all test
 ### Discovery Mode (Initial Analysis)
 - **AST Semantic Analysis**: Go-based Abstract Syntax Tree parser performs deep syntactic analysis (not regex pattern matching)
 - **Relational Database Architecture**: Full normalized database with foreign key relationships tracking all test dependencies
-- **Single-Pass AST Processing**: Efficient AST analyzer extracts all metadata in one pass per file
+- **Single-Pass AST Processing**: Efficient Replicode extracts all metadata in one pass per file
 - **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns through AST call graph analysis
 - **Database Export**: Complete CSV exports of all 12 database tables for advanced analysis
 - **Visual Progress Tracking**: Real-time progress with file-by-file scanning feedback during sequential discovery
@@ -202,7 +202,7 @@ TerraCorder uses a **streamlined 3-phase approach** with AST (Abstract Syntax Tr
 - Identifies sequential test patterns and additional test files
 
 #### Phase 2: AST Analysis and Database Import
-- **Go AST analyzer** performs deep syntactic parsing of all discovered files
+- **Replicode** performs deep syntactic parsing of all discovered files
 - Extracts complete metadata through semantic analysis (not regex pattern matching):
   - Test function signatures and structures
   - Resource struct declarations
@@ -252,9 +252,9 @@ Database Mode loads previously exported CSV files for instant analysis:
 - **Reporting**: Generate reports from structured data
 - **Progressive Discovery**: View options first, then choose your analysis
 
-### AST Analyzer - Go-Based Semantic Parser
+### Replicode - Go-Based Semantic Parser
 
-TerraCorder uses a **Go AST (Abstract Syntax Tree) analyzer** for accurate semantic analysis:
+TerraCorder uses **Replicode**, a Go AST (Abstract Syntax Tree) analyzer for accurate semantic analysis:
 
 #### Why AST Over Regex?
 - **100% Accuracy**: AST parsing understands Go syntax semantically, not just text patterns
@@ -275,11 +275,11 @@ TerraCorder uses a **Go AST (Abstract Syntax Tree) analyzer** for accurate seman
 4. **PowerShell Import**: ASTImport.psm1 loads JSON into normalized database
 
 #### Location
-- Pre-built binary: `tools/ast-analyzer/ast-analyzer` (Linux/macOS) or `ast-analyzer.exe` (Windows)
-- Source code: `tools/ast-analyzer/*.go`
-- Build instructions: `tools/ast-analyzer/README.md`
+- Pre-built binary: `tools/replicode/replicode` (Linux/macOS) or `replicode.exe` (Windows)
+- Source code: `tools/replicode/*.go`
+- Build instructions: `tools/replicode/README.md`
 
-**Note**: The AST analyzer is automatically invoked by TerraCorder during Discovery Mode Phase 2. You don't need to run it manually unless you're debugging or developing.
+**Note**: Replicode is automatically invoked by TerraCorder during Discovery Mode Phase 2. You don't need to run it manually unless you're debugging or developing.
 
 ## Database Schema
 
@@ -581,7 +581,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **PowerShell**: PowerShell Core 7.0 or later
 - **Operating System**: Windows, Linux, or macOS
 - **Memory**: Recommended 4GB+ for large repositories
-- **Go**: Go 1.16+ (for building AST analyzer from source, pre-built binary included)
+- **Go**: Go 1.16+ (for building Replicode from source, pre-built binary included)
 - **Terraform AzureRM Provider**: Source code for analysis
 - **Terminal**: ANSI color support recommended for visual tree diagrams (Windows Terminal, VS Code integrated terminal, or modern Linux/macOS terminal)
 

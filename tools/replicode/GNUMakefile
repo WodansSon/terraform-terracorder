@@ -1,10 +1,10 @@
-# GNUMakefile for AST Analyzer
-# Provides easy build commands for the TerraCorder AST analyzer tool
+# GNUMakefile for Replicode
+# Provides easy build commands for the TerraCorder Replicode tool
 
 # Binary name differs by platform
-BINARY_NAME=ast-analyzer
+BINARY_NAME=replicode
 ifeq ($(OS),Windows_NT)
-	BINARY_NAME := ast-analyzer.exe
+	BINARY_NAME := replicode.exe
 endif
 
 # Go build settings
@@ -18,10 +18,10 @@ GOMOD=$(GOCMD) mod
 # Source files
 SOURCES=main.go patterns.go
 
-# Build the AST analyzer binary
+# Build the Replicode binary
 .PHONY: build
 build: $(SOURCES)
-	@echo "Building AST analyzer..."
+	@echo "Building Replicode..."
 	$(GOBUILD) -o $(BINARY_NAME) -v
 	@echo "Build complete: $(BINARY_NAME)"
 
@@ -59,11 +59,11 @@ test:
 build-all:
 	@echo "Building for multiple platforms..."
 	@echo "Building for Windows..."
-	GOOS=windows GOARCH=amd64 $(GOBUILD) -o ast-analyzer.exe -v
+	GOOS=windows GOARCH=amd64 $(GOBUILD) -o replicode.exe -v
 	@echo "Building for Linux..."
-	GOOS=linux GOARCH=amd64 $(GOBUILD) -o ast-analyzer-linux -v
+	GOOS=linux GOARCH=amd64 $(GOBUILD) -o replicode-linux -v
 	@echo "Building for macOS..."
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) -o ast-analyzer-darwin -v
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) -o replicode-darwin -v
 	@echo "Multi-platform build complete"
 
 # Rebuild (clean + build)
@@ -80,9 +80,9 @@ install:
 # Show help
 .PHONY: help
 help:
-	@echo "TerraCorder AST Analyzer - Available targets:"
+	@echo "TerraCorder Replicode - Available targets:"
 	@echo ""
-	@echo "  make build       - Build the AST analyzer binary (default)"
+	@echo "  make build       - Build the Replicode binary (default)"
 	@echo "  make clean       - Remove build artifacts"
 	@echo "  make rebuild     - Clean and rebuild"
 	@echo "  make deps        - Download Go module dependencies"

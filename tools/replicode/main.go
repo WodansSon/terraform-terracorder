@@ -173,7 +173,7 @@ func main() {
 	flag.Parse()
 
 	if *filePath == "" {
-		fmt.Println("Usage: ast-analyzer -file <path-to-go-file> -reporoot <repo-root>")
+		fmt.Println("Usage: replicode -file <path-to-go-file> -reporoot <repo-root>")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}

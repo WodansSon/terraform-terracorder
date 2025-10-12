@@ -4,14 +4,14 @@
     AST-based data import module for TerraCorder
 
 .DESCRIPTION
-    Imports AST analyzer JSON output and populates database tables.
+    Imports Replicode JSON output and populates database tables.
     Replaces all regex-based pattern matching with semantic analysis.
 
 .NOTES
     Version: 3.0.0
     Requires: Database.psm1, UI.psm1
 
-    AST Output Schema:
+    Replicode Output Schema:
     - file_path: string
     - functions: array (with IsTestFunc, ReceiverType, FunctionName, ServiceName, Line)
     - test_steps: array (with source_function, config_struct, config_method, etc.)
@@ -334,7 +334,7 @@ function Build-LegacyReferenceTablesFromTestSteps {
 function Import-ASTOutput {
     <#
     .SYNOPSIS
-        Main entry point for importing AST analyzer output
+        Main entry point for importing Replicode output
     #>
     param(
         [string]$ASTAnalyzerPath,
@@ -347,19 +347,19 @@ function Import-ASTOutput {
     $processedFiles = 0
     $failedFiles = 0
 
-    Show-PhaseMessage -Message "Processing $totalFiles test files with AST analyzer..."
+    Show-PhaseMessage -Message "Processing $totalFiles test files with Replicode..."
 
     # Process files in parallel for performance
     $progressCounter = 0
     $results = $TestFiles | ForEach-Object -ThrottleLimit $Global:ThreadCount -Parallel {
         $file = $_
-        $astPath = $using:ASTAnalyzerPath
+        $replicodePath = $using:ASTAnalyzerPath
         $repoRoot = $using:RepoRoot
         $resourceName = $using:ResourceName
 
         try {
-            # Run AST analyzer with resourcename filter
-            $output = & $astPath -file $file -reporoot $repoRoot -resourcename $resourceName 2>&1
+            # Run Replicode with resourcename filter
+            $output = & $replicodePath -file $file -reporoot $repoRoot -resourcename $resourceName 2>&1
 
             if ($LASTEXITCODE -ne 0) {
                 return @{ Success = $false; File = $file; Error = "Exit code $LASTEXITCODE" }

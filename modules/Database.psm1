@@ -811,7 +811,7 @@ function Add-TemplateFunctionRecord {
     Add template function record (AST-optimized schema without function bodies)
 
     .DESCRIPTION
-    Stores template function metadata extracted by AST analyzer.
+    Stores template function metadata extracted by Replicode.
     Function bodies are NOT stored (304K row reduction).
     #>
     param(
@@ -851,7 +851,7 @@ function Add-TemplateCallChainRecord {
     Add template call chain record (replaces TemplateCalls + IndirectConfigReferences)
 
     .DESCRIPTION
-    Stores template → template call chains resolved by AST analyzer.
+    Stores template → template call chains resolved by Replicode.
     Supports both same-file (local) and cross-file template calls.
     #>
     param(

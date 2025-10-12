@@ -1,4 +1,4 @@
-module github.com/WodansSon/terraform-terracorder/cmd/ast-analyzer
+module github.com/WodansSon/terraform-terracorder/cmd/replicode
 
 go 1.21
 
