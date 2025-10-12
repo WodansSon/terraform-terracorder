@@ -316,47 +316,41 @@ function Show-PhaseMessageMultiHighlight {
         each with their own color. Useful for messages that need to emphasize multiple values.
     .PARAMETER Message
         The complete message text containing all the highlight text elements
-    .PARAMETER HighlightTexts
-        Array of text strings to be highlighted in the message
-    .PARAMETER HighlightColors
-        Array of colors corresponding to each highlight text. If fewer colors than texts are provided,
-        the last color will be reused for remaining texts.
+    .PARAMETER Highlights
+        Array of hashtables, each containing 'Text' and 'Color' properties.
+        Example: @( @{ Text = "1664"; Color = "Yellow" }, @{ Text = "files"; Color = "Cyan" } )
     .EXAMPLE
-        Show-PhaseMessageMultiHighlight -Message "Found: Reduced to 1664 files (excluded 1008 irrelevant files)" -HighlightTexts @("1664", "1008") -HighlightColors @("Yellow", "Red")
+        Show-PhaseMessageMultiHighlight -Message "Found 1664 files" -Highlights @(
+            @{ Text = "1664"; Color = "Yellow" }
+            @{ Text = "files"; Color = "Cyan" }
+        )
     #>
     param(
         [Parameter(Mandatory = $true)]
         [string]$Message,
         [Parameter(Mandatory = $true)]
-        [array]$HighlightTexts,
-        [Parameter(Mandatory = $false)]
-        [array]$HighlightColors = @("Cyan"),
+        [array]$Highlights,
         [Parameter(Mandatory = $false)]
         [string]$BaseColor = "Gray",
         [Parameter(Mandatory = $false)]
         [string]$InfoColor = "Cyan"
     )
 
-    # Ensure we have at least one color
-    if ($HighlightColors.Count -eq 0) {
-        $HighlightColors = @("Cyan")
-    }
-
     # Create a working copy of the message
     $workingMessage = $Message
 
     # Find all highlight positions with their colors
-    $highlights = @()
+    $highlightPositions = @()
 
-    for ($i = 0; $i -lt $HighlightTexts.Count; $i++) {
-        $text = [string]$HighlightTexts[$i]
-        $colorIndex = [Math]::Min($i, $HighlightColors.Count - 1)
-        $color = $HighlightColors[$colorIndex]
+    for ($i = 0; $i -lt $Highlights.Count; $i++) {
+        $highlight = $Highlights[$i]
+        $text = [string]$highlight.Text
+        $color = $highlight.Color
 
         # Find all occurrences of this text
         $searchPos = 0
         while (($index = $workingMessage.IndexOf($text, $searchPos)) -ge 0) {
-            $highlights += @{
+            $highlightPositions += @{
                 Start = $index
                 End = $index + $text.Length - 1
                 Text = $text
@@ -369,13 +363,13 @@ function Show-PhaseMessageMultiHighlight {
     }
 
     # Sort highlights by start position, then by order if same position
-    $highlights = $highlights | Sort-Object Start, Order
+    $highlightPositions = $highlightPositions | Sort-Object Start, Order
 
     # Remove overlapping highlights, keeping the first one at each position
     $filteredHighlights = @()
     $lastEnd = -1
 
-    foreach ($highlight in $highlights) {
+    foreach ($highlight in $highlightPositions) {
         if ($highlight.Start -gt $lastEnd) {
             $filteredHighlights += $highlight
             $lastEnd = $highlight.End

@@ -230,14 +230,14 @@ try {
         # Convert relative paths to full paths for Replicode
         $testFiles = $relevantFileNames
 
-        Show-PhaseMessageHighlight -Message "Found $($testFiles.Count) Test Files Containing Resource" -HighlightText "$($testFiles.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageHighlight -Message "Found $($testFiles.Count) Test Files Containing The Resource" -HighlightText "$($testFiles.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         $phase1Duration = (Get-Date) - $phase1Start
         Show-PhaseCompletion -PhaseNumber 1 -DurationMs ([math]::Round($phase1Duration.TotalMilliseconds, 0))
         #endregion
 
         #region Phase 2: AST Analysis and Database Import
-        Show-PhaseHeader -PhaseNumber 2 -PhaseDescription "AST Analysis and Database Import"
+        Show-PhaseHeader -PhaseNumber 2 -PhaseDescription "Replicode Analysis and Database Import"
         $phase2Start = Get-Date
 
         # Verify Replicode exists
@@ -249,11 +249,11 @@ try {
         }
 
         # Run Replicode in parallel and import to database
-        Import-ASTOutput -ASTAnalyzerPath $replicodePath -TestFiles $testFiles -RepoRoot $RepositoryDirectory -ResourceName $ResourceName
+        Import-ASTOutput -ASTAnalyzerPath $replicodePath -TestFiles $testFiles -RepoRoot $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         # Phase 2.5: Discover Additional Sequential Test Files
         # After initial import, find files with RunTestsInSequence that reference functions we just imported
-        Show-PhaseMessageHighlight -Message "Scanning for additional sequential test entry points..." -HighlightText "sequential" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageHighlight -Message "Scanning For Additional Sequential Test Entry Points..." -HighlightText "Sequential" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         # Get all test function names from the database - direct property access without looping
         # Don't filter by naming convention - developers can name sequential functions anything!
@@ -262,7 +262,6 @@ try {
         if ($resourceFunctionNames.Count -gt 0) {
             # Get all test files in the repository to search
             $allTestFiles = Get-ChildItem -Path (Join-Path $RepositoryDirectory "internal\services") -Recurse -Filter "*_test.go" | Select-Object -ExpandProperty FullName
-            Show-PhaseMessageHighlight -Message "Searching $($allTestFiles.Count) test files for sequential patterns..." -HighlightText "$($allTestFiles.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
             # Find additional files that have sequential patterns referencing our functions
             $additionalResult = Get-AdditionalSequentialFiles `
@@ -279,15 +278,24 @@ try {
                 $newFilePaths = $additionalFilePaths | Where-Object { $_ -notin $testFiles }
 
                 if ($newFilePaths.Count -gt 0) {
-                    Show-PhaseMessageHighlight -Message "Found $($newFilePaths.Count) additional sequential test files" -HighlightText "$($newFilePaths.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                    Show-PhaseMessageMultiHighlight -Message "Found $($newFilePaths.Count) Additional Sequential Test Files" -Highlights @(
+                        @{ Text = "$($newFilePaths.Count)"; Color = $Script:NumberColor }
+                        @{ Text = "Sequential"; Color = $Script:ItemColor }
+                    ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
                     # Import only the NEW files (deduplicated)
-                    Import-ASTOutput -ASTAnalyzerPath $astAnalyzerPath -TestFiles $newFilePaths -RepoRoot $RepositoryDirectory -ResourceName $ResourceName
+                    Import-ASTOutput -ASTAnalyzerPath $astAnalyzerPath -TestFiles $newFilePaths -RepoRoot $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
                 } else {
-                    Show-PhaseMessageHighlight -Message "All sequential test files were already processed" -HighlightText "All" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                    Show-PhaseMessageMultiHighlight -Message "All Sequential Test Files Were Already Processed" -Highlights @(
+                        @{ Text = "All"; Color = "Yellow" }
+                        @{ Text = "Sequential"; Color = $Script:ItemColor }
+                    ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
                 }
             } else {
-                Show-PhaseMessageHighlight -Message "No additional sequential test files found" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                Show-PhaseMessageMultiHighlight -Message "No Additional Sequential Test Files Found" -Highlights @(
+                    @{ Text = "No"; Color = "Yellow" }
+                    @{ Text = "Sequential"; Color = $Script:ItemColor }
+                ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
             }
         }
 
@@ -302,9 +310,24 @@ try {
         $templateCallCount = 0  # TemplateCallChain not in stats yet
         $directRefCount = $stats.DirectResourceReferences
 
-        Show-PhaseMessageHighlight -Message "Services: $serviceCount | Files: $fileCount | Structs: $structCount" -HighlightText "$serviceCount" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        Show-PhaseMessageHighlight -Message "Test Functions: $testFuncCount | Template Functions: $templateFuncCount" -HighlightText "$testFuncCount" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        Show-PhaseMessageHighlight -Message "Test Steps: $testStepCount | Template Calls: $templateCallCount | Direct References: $directRefCount" -HighlightText "$testStepCount" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        # Display formatted summary block
+        Show-PhaseMessageMultiHighlight -Message "Replicode Analysis Summary:" -Highlights @(
+            @{ Text = "Replicode"; Color = $Script:ItemColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  Structure:  $serviceCount Services, $fileCount Files, $structCount Structs" -Highlights @(
+            @{ Text = "$serviceCount"; Color = $Script:NumberColor }
+            @{ Text = "$fileCount"; Color = $Script:NumberColor }
+            @{ Text = "$structCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  Functions:  $testFuncCount Tests, $templateFuncCount Configuration" -Highlights @(
+            @{ Text = "$testFuncCount"; Color = $Script:NumberColor }
+            @{ Text = "$templateFuncCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  References: $testStepCount Steps, $templateCallCount Calls, $directRefCount Direct" -Highlights @(
+            @{ Text = "$testStepCount"; Color = $Script:NumberColor }
+            @{ Text = "$templateCallCount"; Color = $Script:NumberColor }
+            @{ Text = "$directRefCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         $phase2Duration = (Get-Date) - $phase2Start
         Show-PhaseCompletion -PhaseNumber 2 -DurationMs ([math]::Round($phase2Duration.TotalMilliseconds, 0))
@@ -347,17 +370,21 @@ try {
 
         if ($serviceGroups.Count -gt 0) {
             $commandsResult = Show-GoTestCommands -ServiceGroups $serviceGroups -ExportDirectory $ExportDirectoryAbsolute -WriteToFile
-            Show-PhaseMessageHighlight -Message "Generated test commands for $($serviceGroups.Count) services" -HighlightText "$($serviceGroups.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-PhaseMessageHighlight -Message "Generated Test Commands For $($serviceGroups.Count) Services" -HighlightText "$($serviceGroups.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
             Show-PhaseMessageHighlight -Message "Exported: go_test_commands.txt" -HighlightText "go_test_commands.txt" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+            $phase4Duration = (Get-Date) - $phase4Start
+            Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round($phase4Duration.TotalMilliseconds, 0))
 
             # Display test commands to console
             Show-RunTestsByService -ServiceGroups $serviceGroups -CommandsResult $commandsResult -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor
         } else {
-            Show-PhaseMessageHighlight -Message "No services found to generate test commands" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-PhaseMessageHighlight -Message "No Services Found To Generate Test Commands" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+            $phase4Duration = (Get-Date) - $phase4Start
+            Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round($phase4Duration.TotalMilliseconds, 0))
         }
 
-        $phase4Duration = (Get-Date) - $phase4Start
-        Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round($phase4Duration.TotalMilliseconds, 0))
         #endregion
 
         #region Display Results and Completion

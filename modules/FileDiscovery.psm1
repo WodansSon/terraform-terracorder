@@ -53,7 +53,10 @@ function Get-TestFilesContainingResource {
     }
 
     $excludedCount = $allTestFiles.Count - $allTestFileNames.Count
-    Show-PhaseMessageMultiHighlight -Message "Filtered $excludedCount Irrelevant Files, $($allTestFileNames.Count) Test Files To Analyze" -HighlightTexts @("$excludedCount", "$($allTestFileNames.Count)") -HighlightColors @($NumberColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+    Show-PhaseMessageMultiHighlight -Message "Filtered $excludedCount Irrelevant Files, $($allTestFileNames.Count) Test Files To Analyze" -Highlights @(
+        @{ Text = "$excludedCount"; Color = $NumberColor }
+        @{ Text = "$($allTestFileNames.Count)"; Color = $NumberColor }
+    ) -BaseColor $BaseColor -InfoColor $InfoColor
 
     $relevantFileNames = @()
     $fileContents = @{}  # Store file contents in memory: FullPath -> Content
@@ -67,7 +70,10 @@ function Get-TestFilesContainingResource {
         $filesPerThread = [Math]::Ceiling($totalFiles / $ThreadCount)
 
         $threadText = if ($ThreadCount -eq 1) { "Thread" } else { "Threads" }
-        Show-PhaseMessageMultiHighlight -Message "Processing $totalFiles Files With $ThreadCount $threadText" -HighlightTexts @("$totalFiles", "$ThreadCount") -HighlightColors @($NumberColor, $NumberColor) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message "Processing $totalFiles Files With $ThreadCount $threadText" -Highlights @(
+            @{ Text = "$totalFiles"; Color = $NumberColor }
+            @{ Text = "$ThreadCount"; Color = $NumberColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Create runspace pool for optimal performance
         $runspacePool = [runspacefactory]::CreateRunspacePool(1, $ThreadCount)
@@ -244,13 +250,16 @@ function Get-TestFilesContainingResource {
     }
 
     if ($relevantFileNames.Count -eq 0) {
-        Show-PhaseMessageMultiHighlight -Message "Error: No Test Files Found Containing '$ResourceName'" -HighlightTexts @("Error:", "$ResourceName") -HighlightColors @("Red", "Magenta") -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message "Error: No Test Files Found Containing '$ResourceName'" -Highlights @(
+            @{ Text = "Error:"; Color = "Red" }
+            @{ Text = "$ResourceName"; Color = "Magenta" }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
         Show-PhaseMessageHighlight -Message "Please Verify The -ResourceName Is Correct And Exists In The Repository." -HighlightText "-ResourceName" -HighlightColor "Magenta" -BaseColor "Yellow" -InfoColor $InfoColor
         Write-Host ""
         exit 1
     }
 
-    Show-PhaseMessageHighlight -Message "Found $($relevantFileNames.Count) Test Files That Reference The Resource" -HighlightText "$($relevantFileNames.Count)" -HighlightColor $NumberColor -BaseColor $BaseColor -InfoColor $InfoColor
+    # Return results (message will be shown by caller in proper phase context)
     return @{
         AllFiles = $allTestFileNames
         RelevantFiles = $relevantFileNames
@@ -348,7 +357,7 @@ function Get-AdditionalSequentialFiles {
 
             # Show progress every 100 files
             if ($currentFile % 100 -eq 0 -or $currentFile -eq $totalCandidates) {
-                Show-InlineProgress -Current $currentFile -Total $totalCandidates -Activity "Scanning test files"
+                Show-InlineProgress -Current $currentFile -Total $totalCandidates -Activity "Scanning Test Files"
             }
 
             # Quick check: does this file contain RunTestsInSequence at all?
@@ -360,7 +369,7 @@ function Get-AdditionalSequentialFiles {
 
         # Show completion
         if ($totalCandidates -gt 0) {
-            Show-InlineProgress -Current $totalCandidates -Total $totalCandidates -Activity "Scanning test files" -Completed
+            Show-InlineProgress -Current $totalCandidates -Total $totalCandidates -Activity "Scanning Test Files" -Completed
         }
 
         foreach ($file in $sequentialTestFiles) {

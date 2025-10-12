@@ -1327,7 +1327,10 @@ function Show-SequentialReferences {
         return
     }
 
-    Show-PhaseMessageMultiHighlight -Message "Found $($sequentialRefs.Count) Sequential Test Dependencies" -HighlightTexts @("$($sequentialRefs.Count)", "Sequential") -HighlightColors @($NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
+    Show-PhaseMessageMultiHighlight -Message "Found $($sequentialRefs.Count) Sequential Test Dependencies" -Highlights @(
+        @{ Text = "$($sequentialRefs.Count)"; Color = $NumberColor }
+        @{ Text = "Sequential"; Color = $ItemColor }
+    ) -BaseColor $BaseColor -InfoColor $InfoColor
     Write-Host ""
 
     # Group by sequential group
@@ -1412,7 +1415,10 @@ function Show-CrossFileReferences {
         return
     }
 
-    Show-PhaseMessageMultiHighlight -Message "Found $($crossFileSteps.Count) Cross-File Struct References" -HighlightTexts @("$($crossFileSteps.Count)", "Cross-File") -HighlightColors @($NumberColor, $ItemColor) -BaseColor $BaseColor -InfoColor $InfoColor
+    Show-PhaseMessageMultiHighlight -Message "Found $($crossFileSteps.Count) Cross-File Struct References" -Highlights @(
+        @{ Text = "$($crossFileSteps.Count)"; Color = $NumberColor }
+        @{ Text = "Cross-File"; Color = $ItemColor }
+    ) -BaseColor $BaseColor -InfoColor $InfoColor
     Write-Host ""
 
     # Build file-based grouping

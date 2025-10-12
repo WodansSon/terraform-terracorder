@@ -340,14 +340,21 @@ function Import-ASTOutput {
         [string]$ASTAnalyzerPath,
         [string[]]$TestFiles,
         [string]$RepoRoot,
-        [string]$ResourceName = ""
+        [string]$ResourceName = "",
+        [string]$NumberColor = "Yellow",
+        [string]$ItemColor = "Cyan",
+        [string]$BaseColor = "Gray",
+        [string]$InfoColor = "Cyan"
     )
 
     $totalFiles = $TestFiles.Count
     $processedFiles = 0
     $failedFiles = 0
 
-    Show-PhaseMessage -Message "Processing $totalFiles test files with Replicode..."
+    Show-PhaseMessageMultiHighlight -Message "Processing $totalFiles Test Files With Replicode..." -Highlights @(
+        @{ Text = "$totalFiles"; Color = $NumberColor }
+        @{ Text = "Replicode"; Color = $ItemColor }
+    ) -BaseColor $BaseColor -InfoColor $InfoColor
 
     # Process files in parallel for performance
     $progressCounter = 0
@@ -377,15 +384,15 @@ function Import-ASTOutput {
         # Progress indicator (runs in main thread)
         $progressCounter++
         if ($progressCounter % 50 -eq 0 -or $progressCounter -eq $totalFiles) {
-            Show-InlineProgress -Current $progressCounter -Total $totalFiles -Activity "Processing files"
+            Show-InlineProgress -Current $progressCounter -Total $totalFiles -Activity "Processing Files"
         }
         $_  # Pass through the result
     }
 
     # Show final completion
-    Show-InlineProgress -Current $totalFiles -Total $totalFiles -Activity "Processing files" -Completed
+    Show-InlineProgress -Current $totalFiles -Total $totalFiles -Activity "Processing Files" -Completed
 
-    Show-PhaseMessage -Message "Importing AST data into database..."
+    Show-PhaseMessageHighlight -Message "Importing Replicode Data Into Database..." -HighlightText "Replicode" -HighlightColor $ItemColor -BaseColor $BaseColor -InfoColor $InfoColor
 
     # Two-pass import:
     # Pass 1: Import all functions to build global lookup tables
@@ -406,12 +413,12 @@ function Import-ASTOutput {
 
         # Show progress every 50 files or at the end
         if ($pass1Counter % 50 -eq 0 -or $pass1Counter -eq $totalResults) {
-            Show-InlineProgress -Current $pass1Counter -Total $totalResults -Activity "  Importing functions"
+            Show-InlineProgress -Current $pass1Counter -Total $totalResults -Activity "  Importing Functions"
         }
 
         if (-not $result.Success) {
             $failedFiles++
-            Show-ErrorMessage -ErrorTitle "AST Error:" -ErrorMessage "Failed to process $($result.File)`: $($result.Error)"
+            Show-ErrorMessage -ErrorTitle "Replicode Error:" -ErrorMessage "Failed to process $($result.File)`: $($result.Error)"
             continue
         }
 
@@ -462,7 +469,7 @@ function Import-ASTOutput {
     }
 
     # Show Pass 1 completion
-    Show-InlineProgress -Current $totalResults -Total $totalResults -Activity "  Importing functions" -Completed
+    Show-InlineProgress -Current $totalResults -Total $totalResults -Activity "  Importing Functions" -Completed
 
     # Pass 2: Import test steps, template calls, sequential references, and direct resource references using global lookups
     $pass2Counter = 0
@@ -473,7 +480,7 @@ function Import-ASTOutput {
 
         # Show progress every 50 files or at the end
         if ($pass2Counter % 50 -eq 0 -or $pass2Counter -eq $totalFileData) {
-            Show-InlineProgress -Current $pass2Counter -Total $totalFileData -Activity "  Importing references"
+            Show-InlineProgress -Current $pass2Counter -Total $totalFileData -Activity "  Importing References"
         }
 
         try {
@@ -505,17 +512,21 @@ function Import-ASTOutput {
     }
 
     # Show Pass 2 completion
-    Show-InlineProgress -Current $totalFileData -Total $totalFileData -Activity "  Importing references" -Completed
+    Show-InlineProgress -Current $totalFileData -Total $totalFileData -Activity "  Importing References" -Completed
 
     # Pass 3: Generate TemplateReferences and IndirectConfigReferences from TestSteps
     # This populates the legacy tables needed for blast radius analysis
     Build-LegacyReferenceTablesFromTestSteps
 
     $successCount = $processedFiles - $failedFiles
-    Show-PhaseMessage -Message "AST import complete`: $successCount/$totalFiles files processed successfully"
+    Show-PhaseMessageMultiHighlight -Message "Replicode Import Complete: $successCount/$totalFiles Files Processed Successfully" -Highlights @(
+        @{ Text = "Replicode"; Color = $ItemColor }
+        @{ Text = "$successCount"; Color = $NumberColor }
+        @{ Text = "$totalFiles"; Color = $NumberColor }
+    ) -BaseColor $BaseColor -InfoColor $InfoColor
 
     if ($failedFiles -gt 0) {
-        Show-PhaseMessage -Message "$failedFiles files failed to process"
+        Show-PhaseMessage -Message "$failedFiles Files Failed To Process"
     }
 }
 
