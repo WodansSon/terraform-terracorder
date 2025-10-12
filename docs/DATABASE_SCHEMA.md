@@ -101,26 +101,45 @@ The database currently exports the following 12 tables to CSV:
 
 ```mermaid
 erDiagram
-    Resources ||--o{ DirectResourceReferences : "referenced in"
-    Services ||--o{ Files : contains
-    Services ||--o{ Structs : defines
-    Files ||--o{ Structs : contains
-    Files ||--o{ TestFunctions : contains
-    Files ||--o{ TemplateFunctions : contains
-    Structs ||--o{ TestFunctions : "receives on"
-    Structs ||--o{ TemplateFunctions : "receives on"
-    TestFunctions ||--o{ TestFunctionSteps : "executes"
-    TestFunctions ||--o{ TemplateReferences : calls
+    %% Resources is the top-level entity - everything flows from here
+    Resources ||--o{ Services : "has services for"
+    Resources ||--o{ Structs : "defines test structs for"
+    Resources ||--o{ TestFunctions : "tested by"
+    Resources ||--o{ TemplateFunctions : "configured by"
+    Resources ||--o{ DirectResourceReferences : "directly referenced in"
+
+    %% Service hierarchy
+    Services ||--o{ Files : "contains test files"
+    Services ||--o{ Structs : "defines test structs"
+
+    %% File relationships
+    Files ||--o{ TestFunctions : "contains"
+    Files ||--o{ TemplateFunctions : "contains"
+    Files ||--o{ Structs : "defines"
+
+    %% Struct relationships
+    Structs ||--o{ TestFunctions : "receiver for"
+    Structs ||--o{ TemplateFunctions : "receiver for"
+
+    %% Test function execution flow
+    TestFunctions ||--o{ TestFunctionSteps : "executes steps"
     TestFunctions ||--o{ SequentialReferences : "entry point for"
     TestFunctions ||--o{ SequentialReferences : "referenced in"
-    TemplateFunctions ||--o{ TestFunctionSteps : "called by"
-    TemplateFunctions ||--o{ DirectResourceReferences : "references"
-    TemplateFunctions ||--o{ TemplateReferences : "is called"
+    TestFunctions ||--o{ TemplateReferences : "calls templates via"
+
+    %% Template function relationships
+    TemplateFunctions ||--o{ TestFunctionSteps : "called by step"
+    TemplateFunctions ||--o{ DirectResourceReferences : "references resource"
+    TemplateFunctions ||--o{ TemplateReferences : "is referenced"
+
+    %% Reference flow
     TestFunctionSteps ||--o{ IndirectConfigReferences : "produces"
-    TemplateReferences ||--o{ IndirectConfigReferences : "via"
-    ReferenceTypes ||--o{ TestFunctionSteps : classifies
-    ReferenceTypes ||--o{ DirectResourceReferences : classifies
-    ReferenceTypes ||--o{ IndirectConfigReferences : classifies
+    TemplateReferences ||--o{ IndirectConfigReferences : "resolves to"
+
+    %% Reference type classification
+    ReferenceTypes ||--o{ TestFunctionSteps : "classifies"
+    ReferenceTypes ||--o{ DirectResourceReferences : "classifies"
+    ReferenceTypes ||--o{ IndirectConfigReferences : "classifies"
 
     Resources {
         int ResourceRefId PK
