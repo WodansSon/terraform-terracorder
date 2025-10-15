@@ -25,8 +25,8 @@ type SequentialTestInfo struct {
 
 // MapBasedTestInfo captures map-based sequential test storage
 type MapBasedTestInfo struct {
-	MapVariableName  string                      // Name of the map variable
-	MapType          string                      // Full map type (map[string]map[string]func...)
+	MapVariableName  string // Name of the map variable
+	MapType          string // Full map type (map[string]map[string]func...)
 	Line             int
 	FilePath         string
 	FunctionRefs     []string                    // Functions stored in the map (for quick reference)
@@ -53,13 +53,13 @@ type AnonymousFunctionInfo struct {
 
 // FunctionVisibilityInfo captures Go visibility classification
 type FunctionVisibilityInfo struct {
-	FunctionName       string
-	ReceiverType       string
-	Line               int
-	FilePath           string
-	IsPublic           bool   // Uppercase first letter (IsPrivate is just !IsPublic)
-	VisibilityType     string // "PUBLIC_REFERENCE" or "PRIVATE_REFERENCE"
-	ReferenceTypeId    int    // Maps to database: 11=PRIVATE, 12=PUBLIC
+	FunctionName    string
+	ReceiverType    string
+	Line            int
+	FilePath        string
+	IsPublic        bool   // Uppercase first letter (IsPrivate is just !IsPublic)
+	VisibilityType  string // "PUBLIC_REFERENCE" or "PRIVATE_REFERENCE"
+	ReferenceTypeId int    // Maps to database: 11=PRIVATE, 12=PUBLIC
 }
 
 // DetectPatterns analyzes AST for all pattern types
@@ -183,8 +183,8 @@ func (d *PatternDetector) analyzeCallExpr(node *ast.CallExpr, filePath string, c
 										Line:             int(node.Pos()),
 										FilePath:         filePath,
 										FunctionRefs:     functionRefs,
-										Mappings:         mappings,         // Now includes group/key/function details!
-										IsInlineArgument: true,             // Mark as inline argument to RunTestsInSequence
+										Mappings:         mappings, // Now includes group/key/function details!
+										IsInlineArgument: true,     // Mark as inline argument to RunTestsInSequence
 									})
 								}
 							}
@@ -208,7 +208,7 @@ func (d *PatternDetector) analyzeValueSpec(node *ast.ValueSpec, filePath string,
 						// Check if inner map value is a function type
 						if funcType, ok := innerMap.Value.(*ast.FuncType); ok {
 							// This is a map[string]map[string]func(...) pattern
-							mapTypeStr := d.formatMapType(mapType)
+							mapTypeStr := d.formatMapType()
 							functionRefs := d.extractFunctionRefs(compLit)
 							mappings := d.extractSequentialMappings(compLit)
 
@@ -262,7 +262,7 @@ func (d *PatternDetector) analyzeAssignStmt(node *ast.AssignStmt, filePath strin
 						// Check if inner map value is a function type
 						if funcType, ok := innerMap.Value.(*ast.FuncType); ok {
 							// This is a map[string]map[string]func(...) pattern
-							mapTypeStr := d.formatMapType(mapType)
+							mapTypeStr := d.formatMapType()
 							functionRefs := d.extractFunctionRefs(compLit)
 							mappings := d.extractSequentialMappings(compLit)
 
@@ -296,7 +296,7 @@ func (d *PatternDetector) analyzeAssignStmt(node *ast.AssignStmt, filePath strin
 // analyzeFuncLit detects anonymous function declarations
 func (d *PatternDetector) analyzeFuncLit(node *ast.FuncLit, filePath string, currentFunction string) {
 	// Anonymous function detected
-	funcType := d.formatFuncType(node.Type)
+	funcType := d.formatFuncType()
 
 	d.AnonymousFunctions = append(d.AnonymousFunctions, AnonymousFunctionInfo{
 		ParentFunction: currentFunction, // Now we have proper context
@@ -305,13 +305,15 @@ func (d *PatternDetector) analyzeFuncLit(node *ast.FuncLit, filePath string, cur
 		FunctionType:   funcType,
 		Context:        "anonymous_function",
 	})
-}// Helper functions
-func (d *PatternDetector) formatMapType(mapType *ast.MapType) string {
+}
+
+// Helper functions
+func (d *PatternDetector) formatMapType() string {
 	// Build string representation of map type
 	return "map[string]map[string]func(t *testing.T)"
 }
 
-func (d *PatternDetector) formatFuncType(funcType *ast.FuncType) string {
+func (d *PatternDetector) formatFuncType() string {
 	// Build string representation of function type
 	return "func(...)"
 }

@@ -62,7 +62,8 @@ $script:ReferenceTypeLookup = @{
 }
 
 # Global in-memory database tables (normalized with foreign keys)
-$script:Resources = @{}                 # ResourceRefId -> Resource record (ResourceName)
+$script:ResourceRegistrations = @{}     # ResourceRegistrationRefId -> ResourceRegistration record (ResourceName, ServiceRefId) - parsed from registration.go files
+$script:Resources = @{}                 # ResourceRefId -> Resource record (ResourceName, ResourceRegistrationRefId FK)
 $script:Services = @{}                  # ServiceRefId -> Service record (with ResourceRefId FK)
 $script:Files = @{}                     # FileRefId -> File record (with ServiceRefId FK)
 $script:Structs = @{}                   # StructRefId -> Struct record (with ServiceRefId, FileRefId FKs)
@@ -72,12 +73,14 @@ $script:TestFunctionStepIndex = $null   # Composite index: "TestFunctionRefId-St
 $script:DirectResourceReferences = @{}  # DirectRefId -> DirectReference record (with FileRefId, ReferenceTypeId FKs)
 $script:IndirectConfigReferences = @{}  # IndirectRefId -> IndirectReference record (with TestFunctionStepRefId, TemplateReferenceRefId, SourceTemplateFunctionRefId, ReferenceTypeId FKs)
 $script:TemplateFunctions = @{}         # TemplateFunctionRefId -> TemplateFunction record (with ServiceRefId, FileRefId, StructRefId FKs)
-$script:TemplateCallChain = @{}         # ChainRefId -> TemplateCallChain record (AST-optimized template call chains)
-$script:TemplateChainResources = @{}    # ChainResourceRefId -> Junction table (ChainRefId → ResourceRefId)
+$script:TemplateCallChain = @{}         # TemplateCallChainRefId -> TemplateCallChain record (tracks template → template calls with SourceTemplateFunctionRefId, TargetTemplateFunctionRefId FKs)
 $script:SequentialReferences = @{}      # SequentialRefId -> Sequential record (with EntryPointFunctionRefId, ReferencedFunctionRefId FKs)
 $script:TemplateReferences = @{}        # TemplateReferenceRefId -> TemplateReference record (with TestFunctionRefId, TestFunctionStepRefId, StructRefId FKs)
 
 # Performance indexes for O(1) lookups
+$script:ResourceRegistrationsByNameIndex = @{}  # ResourceName -> ResourceRegistrationRefId (for O(1) resource name lookups)
+$script:ResourcesByNameIndex = @{}      # ResourceName -> ResourceRefId (for O(1) resource name lookups)
+$script:ServicesByNameIndex = @{}       # ServiceName -> ServiceRefId (for O(1) service name lookups)
 $script:FilePathToRefIdIndex = @{}      # FilePath -> FileRefId (for fast reverse lookups)
 $script:StructsByFileIndex = @{}        # FileRefId -> Array of StructRefIds (for O(1) file-based struct lookups)
 $script:StructsByNameIndex = @{}        # StructName -> StructRefId (for O(1) name-based struct lookups)
@@ -86,6 +89,7 @@ $script:TestFunctionsByIdIndex = @{}    # TestFunctionRefId -> TestFunction reco
 $script:TestFunctionsByNameIndex = @{}  # FunctionName -> Array of TestFunctionRefIds (for O(1) name-based lookups, can have duplicates)
 
 # Auto-increment counters for primary keys
+$script:ResourceRegistrationRefIdCounter = 1
 $script:ResourceRefIdCounter = 1
 $script:ServiceRefIdCounter = 1
 $script:FileRefIdCounter = 1
@@ -98,8 +102,7 @@ $script:DirectRefIdCounter = 1
 $script:IndirectRefIdCounter = 1
 $script:TemplateFunctionRefIdCounter = 1   # For TemplateFunctions table
 $script:TemplateCallRefIdCounter = 1       # For TemplateCalls table
-$script:TemplateCallChainRefIdCounter = 1  # For AST-optimized TemplateCallChain table
-$script:TemplateChainResourcesRefIdCounter = 1  # For junction table
+$script:TemplateCallChainRefIdCounter = 1  # For TemplateCallChain table (template → template calls)
 $script:SequentialRefIdCounter = 1
 $script:TemplateReferenceRefIdCounter = 1  # For TemplateReferences table
 
@@ -127,9 +130,6 @@ function Initialize-TerraDatabase {
 
     .PARAMETER ItemColor
     Color for item types in output messages
-
-    .PARAMETER ElapsedColor
-    Color for elapsed time in output messages
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -142,8 +142,6 @@ function Initialize-TerraDatabase {
         [string]$NumberColor = "Green",
         [Parameter(Mandatory = $false)]
         [string]$ItemColor = "Cyan",
-        [Parameter(Mandatory = $false)]
-        [string]$ElapsedColor = "Yellow",
         [Parameter(Mandatory = $false)]
         [string]$BaseColor = "Gray",
         [Parameter(Mandatory = $false)]
@@ -169,6 +167,7 @@ function Initialize-TerraDatabase {
     }
 
     # Clear all in-memory tables
+    $script:ResourceRegistrations.Clear()
     $script:Resources.Clear()
     $script:Services.Clear()
     $script:Files.Clear()
@@ -178,12 +177,14 @@ function Initialize-TerraDatabase {
     $script:DirectResourceReferences.Clear()
     $script:IndirectConfigReferences.Clear()
     $script:TemplateFunctions.Clear()  # Template function definitions
-    $script:TemplateCallChain.Clear()  # AST-optimized call chains
-    $script:TemplateChainResources.Clear()  # Junction table
+    $script:TemplateCallChain.Clear()  # Template → template call chains
     $script:SequentialReferences.Clear()
     $script:TemplateReferences.Clear()
 
     # Clear performance indexes
+    $script:ResourceRegistrationsByNameIndex.Clear()  # Clear resource-registration-by-name index
+    $script:ResourcesByNameIndex.Clear()  # Clear resource-by-name index
+    $script:ServicesByNameIndex.Clear()  # Clear service-by-name index
     $script:FilePathToRefIdIndex.Clear()
     $script:TestFunctionStepIndex = $null  # Clear step lookup index
     $script:StructsByFileIndex.Clear()     # Clear struct-by-file index
@@ -193,6 +194,7 @@ function Initialize-TerraDatabase {
     $script:TestFunctionsByNameIndex.Clear()  # Clear test-function-by-name index
 
     # Reset counters
+    $script:ResourceRegistrationRefIdCounter = 1
     $script:ResourceRefIdCounter = 1
     $script:ServiceRefIdCounter = 1
     $script:FileRefIdCounter = 1
@@ -204,21 +206,39 @@ function Initialize-TerraDatabase {
     $script:DirectRefIdCounter = 1
     $script:IndirectRefIdCounter = 1
     $script:TemplateFunctionRefIdCounter = 1  # For TemplateFunctions table
-    $script:TemplateCallChainRefIdCounter = 1  # For AST-based TemplateCallChain
-    $script:TemplateChainResourcesRefIdCounter = 1  # For junction table
+    $script:TemplateCallChainRefIdCounter = 1  # For TemplateCallChain table (template → template calls)
     $script:SequentialRefIdCounter = 1
     $script:TemplateReferenceRefIdCounter = 1
 
     # INITIALIZE NORMALIZED LOOKUP TABLES (master data)
     Show-PhaseMessage -Message "Creating Database Tables" -BaseColor $BaseColor -InfoColor $InfoColor
 
+    # Import resource registrations from registration.go files
+    if ($RepositoryDirectory -and (Test-Path $RepositoryDirectory)) {
+        $registrationCount = Import-ResourceRegistrations -RepositoryPath $RepositoryDirectory
+        if ($registrationCount -gt 0) {
+            Show-PhaseMessageHighlight -Message "Imported $registrationCount Resource Registrations" -HighlightText "$registrationCount" -HighlightColor $NumberColor -BaseColor $BaseColor -InfoColor $InfoColor
+        } else {
+            Show-PhaseMessage -Message "No resource registrations found in registration.go files" -BaseColor $BaseColor -InfoColor "Yellow"
+        }
+    } else {
+        Show-PhaseMessage -Message "Repository directory not provided or does not exist - skipping registration import" -BaseColor $BaseColor -InfoColor "Yellow"
+    }
+
     # Populate Resources table if ResourceName is provided
     if ($ResourceName) {
+        # Look up the registration for this resource
+        $registration = Get-ResourceRegistrationByName -ResourceName $ResourceName
+        $resourceRegistrationRefId = if ($registration) { $registration.ResourceRegistrationRefId } else { $null }
+
         $script:Resources[1] = [PSCustomObject]@{
             ResourceRefId = 1
             ResourceName = $ResourceName
+            ResourceRegistrationRefId = $resourceRegistrationRefId
         }
-        Show-PhaseMessageHighlight -Message "Initialized Resources Table: $ResourceName" -HighlightText "$ResourceName" -HighlightColor $ItemColor -BaseColor $BaseColor -InfoColor $InfoColor
+
+        # Update index
+        $script:ResourcesByNameIndex[$ResourceName] = 1
     }
 
     Show-PhaseMessageHighlight -Message "Populating ReferenceTypes Table" -HighlightText "ReferenceTypes" -HighlightColor $ItemColor -BaseColor $BaseColor -InfoColor $InfoColor
@@ -280,17 +300,365 @@ function Get-ReferenceTypeId {
     }
 }
 
+function Get-FunctionVisibilityType {
+    <#
+    .SYNOPSIS
+    Determine function visibility based on Go naming convention
+
+    .DESCRIPTION
+    In Go, function visibility is determined by the first letter:
+    - Uppercase first letter = Public/Exported function (PUBLIC_REFERENCE = 12)
+    - Lowercase first letter = Private/Unexported function (PRIVATE_REFERENCE = 11)
+
+    .PARAMETER FunctionName
+    The name of the function to check
+
+    .RETURNS
+    ReferenceTypeId: 12 for public functions, 11 for private functions
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FunctionName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($FunctionName)) {
+        return 11  # Default to private if no name
+    }
+
+    $firstChar = $FunctionName.Substring(0, 1)
+
+    if ($firstChar -cmatch '[A-Z]') {
+        # Uppercase = Public function
+        return 12  # PUBLIC_REFERENCE
+    } else {
+        # Lowercase = Private function
+        return 11  # PRIVATE_REFERENCE
+    }
+}
+
+function Get-ServiceNameFromResource {
+    <#
+    .SYNOPSIS
+    Find the owning service for a Terraform resource by searching registration.go files
+
+    .DESCRIPTION
+    Searches registration.go files in internal/services/*/ to find which service registers the resource.
+    Reads the package name from the registration.go file that contains the resource name.
+    For example:
+    - azurerm_recovery_services_vault -> finds it registered in internal/services/recoveryservices/registration.go
+    - azurerm_storage_account -> finds it registered in internal/services/storage/registration.go
+
+    .PARAMETER ResourceName
+    The full Terraform resource name (e.g., azurerm_recovery_services_vault)
+
+    .PARAMETER RepositoryPath
+    The root path of the terraform-provider-azurerm repository
+
+    .OUTPUTS
+    String - The owning service name (package name), or $null if not found
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResourceName,
+        [Parameter(Mandatory = $false)]
+        [string]$RepositoryPath = $null
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RepositoryPath) -or -not (Test-Path $RepositoryPath)) {
+        return $null
+    }
+
+    # Search in internal/services/*/ directories for registration.go files
+    $servicesPath = Join-Path $RepositoryPath "internal\services"
+
+    if (-not (Test-Path $servicesPath)) {
+        return $null
+    }
+
+    # Get all registration.go files
+    $registrationFiles = Get-ChildItem -Path $servicesPath -Filter "registration.go" -Recurse -File -ErrorAction SilentlyContinue
+
+    foreach ($regFile in $registrationFiles) {
+        # Read the file content
+        $content = Get-Content -Path $regFile.FullName -Raw -ErrorAction SilentlyContinue
+
+        if ($content -and $content -match $ResourceName) {
+            # Found the resource registration, now extract the package name
+            if ($content -match '^\s*package\s+(\w+)') {
+                $packageName = $matches[1]
+                return $packageName
+            }
+        }
+    }
+
+    return $null
+}
+
+function Add-ResourceRegistrationRecord {
+    <#
+    .SYNOPSIS
+    Add a resource registration entry mapping a resource to its owning service
+
+    .PARAMETER ResourceName
+    The Terraform resource name (e.g., azurerm_recovery_services_vault)
+
+    .PARAMETER ServiceRefId
+    The foreign key to the Services table indicating which service owns this resource
+
+    .OUTPUTS
+    Int - The ResourceRegistrationRefId of the new or existing record
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResourceName,
+        [Parameter(Mandatory = $true)]
+        [int]$ServiceRefId
+    )
+
+    # Check if this resource registration already exists using index
+    if ($script:ResourceRegistrationsByNameIndex.ContainsKey($ResourceName)) {
+        $existingRefId = $script:ResourceRegistrationsByNameIndex[$ResourceName]
+        $existing = $script:ResourceRegistrations[$existingRefId]
+        if ($existing.ServiceRefId -eq $ServiceRefId) {
+            return $existingRefId
+        }
+    }
+
+    $registrationRefId = $script:ResourceRegistrationRefIdCounter++
+    $script:ResourceRegistrations[$registrationRefId] = [PSCustomObject]@{
+        ResourceRegistrationRefId = $registrationRefId
+        ServiceRefId = $ServiceRefId
+        ResourceName = $ResourceName
+    }
+
+    # Update index
+    $script:ResourceRegistrationsByNameIndex[$ResourceName] = $registrationRefId
+
+    return $registrationRefId
+}
+
+function Get-ResourceRegistrationByName {
+    <#
+    .SYNOPSIS
+    Find a resource registration by resource name using O(1) index lookup
+
+    .PARAMETER ResourceName
+    The Terraform resource name to search for
+
+    .OUTPUTS
+    PSCustomObject - The registration record, or $null if not found
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResourceName
+    )
+
+    if ($script:ResourceRegistrationsByNameIndex.ContainsKey($ResourceName)) {
+        $refId = $script:ResourceRegistrationsByNameIndex[$ResourceName]
+        return $script:ResourceRegistrations[$refId]
+    }
+
+    return $null
+}
+
+function Import-ResourceRegistrations {
+    <#
+    .SYNOPSIS
+    Parse all registration.go files to build the ResourceRegistrations table
+
+    .DESCRIPTION
+    Scans internal/services/*/registration.go files to find resource registrations.
+    Extracts package name (service name) and registered resource names.
+    Supports both old-style SupportedResources() map and new-style typed Resources() list.
+    Uses parallel processing for improved performance.
+
+    .PARAMETER RepositoryPath
+    Root path of the terraform-provider-azurerm repository
+
+    .OUTPUTS
+    Int - Number of resource registrations imported
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryPath
+    )
+
+    $servicesPath = Join-Path $RepositoryPath "internal\services"
+
+    if (-not (Test-Path $servicesPath)) {
+        return 0
+    }
+
+    # Get all service directories
+    $serviceDirectories = Get-ChildItem -Path $servicesPath -Directory
+
+    if ($serviceDirectories.Count -eq 0) {
+        return 0
+    }
+
+    # Precompile regex patterns for better performance
+    $packageRegex = [regex]::new('package\s+(\w+)', [System.Text.RegularExpressions.RegexOptions]::Compiled)
+    $oldStyleResourceRegex = [regex]::new('^\s+"(azurerm_[^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Multiline -bor [System.Text.RegularExpressions.RegexOptions]::Compiled)
+    $structRegex = [regex]::new('^\s+(\w+)\{\},', [System.Text.RegularExpressions.RegexOptions]::Multiline -bor [System.Text.RegularExpressions.RegexOptions]::Compiled)
+    $resourceTypeRegex = [regex]::new('func \(r (\w+)\) ResourceType\(\) string \{[^}]*return "([^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Compiled)
+
+    # Parallel processing using runspace pool (similar to Phase 1 file discovery)
+    $threadCount = [Math]::Min(8, $serviceDirectories.Count)
+    $runspacePool = [runspacefactory]::CreateRunspacePool(1, $threadCount)
+    $runspacePool.Open()
+
+    # Split service directories into chunks
+    $servicesPerThread = [Math]::Ceiling($serviceDirectories.Count / $threadCount)
+    $serviceChunks = @()
+
+    for ($i = 0; $i -lt $threadCount; $i++) {
+        $startIndex = $i * $servicesPerThread
+        $endIndex = [Math]::Min($startIndex + $servicesPerThread - 1, $serviceDirectories.Count - 1)
+
+        if ($startIndex -lt $serviceDirectories.Count) {
+            $serviceChunks += ,@($serviceDirectories[$startIndex..$endIndex])
+        }
+    }
+
+    # Script block to process a chunk of services
+    $processServiceChunk = {
+        param($ServiceDirs, $PackageRegex, $LegacyResourceRegex, $StructRegex, $ResourceTypeRegex)
+
+        $results = @()
+
+        foreach ($serviceDir in $ServiceDirs) {
+            $registrationFile = Join-Path $serviceDir.FullName "registration.go"
+
+            if (-not (Test-Path $registrationFile)) {
+                continue
+            }
+
+            # Read registration file once
+            $regContent = Get-Content -Path $registrationFile -Raw
+
+            # Find package name: "package recoveryservices"
+            $packageMatch = $PackageRegex.Match($regContent)
+            if (-not $packageMatch.Success) {
+                continue
+            }
+
+            $serviceName = $packageMatch.Groups[1].Value
+            $resources = @()
+
+            # Get legacy resources from SupportedResources() or SupportedDataSources() map
+            $legacyMatches = $LegacyResourceRegex.Matches($regContent)
+            foreach ($match in $legacyMatches) {
+                $resources += $match.Groups[1].Value
+            }
+
+            # Get typed resources from Resources() method
+            $structMatches = $StructRegex.Matches($regContent)
+            $structs = $structMatches | ForEach-Object { $_.Groups[1].Value }
+
+            if ($structs.Count -gt 0) {
+                # Build a map of struct -> resource/data source name by reading all *_resource.go and *_data_source.go files ONCE
+                $structToResourceMap = @{}
+
+                # Process both resource files and data source files
+                Get-ChildItem -Path $serviceDir.FullName -Filter "*_resource.go" -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    $resourceContent = Get-Content $_.FullName -Raw
+
+                    # Find all ResourceType() methods in this file
+                    # Pattern: func (r StructName) ResourceType() string { ... return "azurerm_..." }
+                    $resourceMatches = $ResourceTypeRegex.Matches($resourceContent)
+
+                    foreach ($match in $resourceMatches) {
+                        $structName = $match.Groups[1].Value
+                        $resourceName = $match.Groups[2].Value
+                        $structToResourceMap[$structName] = $resourceName
+                    }
+                }
+
+                Get-ChildItem -Path $serviceDir.FullName -Filter "*_data_source.go" -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    $dataSourceContent = Get-Content $_.FullName -Raw
+
+                    # Find all ResourceType() methods in this file
+                    # Pattern: func (d StructName) ResourceType() string { ... return "azurerm_..." }
+                    $dataSourceMatches = $ResourceTypeRegex.Matches($dataSourceContent)
+
+                    foreach ($match in $dataSourceMatches) {
+                        $structName = $match.Groups[1].Value
+                        $resourceName = $match.Groups[2].Value
+                        $structToResourceMap[$structName] = $resourceName
+                    }
+                }
+
+                # Map structs to resource names
+                foreach ($struct in $structs) {
+                    if ($structToResourceMap.ContainsKey($struct)) {
+                        $resources += $structToResourceMap[$struct]
+                    }
+                }
+            }
+
+            # Return unique resources for this service
+            $uniqueResources = $resources | Sort-Object -Unique
+            if ($uniqueResources.Count -gt 0) {
+                $results += [PSCustomObject]@{
+                    ServiceName = $serviceName
+                    Resources = $uniqueResources
+                }
+            }
+        }
+
+        return $results
+    }
+
+    # Create and start runspaces
+    $jobs = @()
+    foreach ($chunk in $serviceChunks) {
+        $powershell = [powershell]::Create().AddScript($processServiceChunk).AddArgument($chunk).AddArgument($packageRegex).AddArgument($oldStyleResourceRegex).AddArgument($structRegex).AddArgument($resourceTypeRegex)
+        $powershell.RunspacePool = $runspacePool
+
+        $jobs += [PSCustomObject]@{
+            PowerShell = $powershell
+            Handle = $powershell.BeginInvoke()
+        }
+    }
+
+    # Wait for all jobs to complete and collect results
+    $allResults = @()
+    foreach ($job in $jobs) {
+        $result = $job.PowerShell.EndInvoke($job.Handle)
+        $allResults += $result
+        $job.PowerShell.Dispose()
+    }
+
+    $runspacePool.Close()
+    $runspacePool.Dispose()
+
+    # Now add all the results to the database (must be done serially due to shared hashtables)
+    $registrationCount = 0
+    foreach ($serviceResult in $allResults) {
+        # Get or create service record
+        $serviceRefId = Add-ServiceRecord -Name $serviceResult.ServiceName
+
+        # Add all resources for this service
+        foreach ($resourceName in $serviceResult.Resources) {
+            Add-ResourceRegistrationRecord -ResourceName $resourceName -ServiceRefId $serviceRefId | Out-Null
+            $registrationCount++
+        }
+    }
+
+    return $registrationCount
+}
+
 function Add-ServiceRecord {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Name
     )
 
-    # Check if service already exists
-    foreach ($service in $script:Services.Values) {
-        if ($service.Name -eq $Name) {
-            return $service.ServiceRefId
-        }
+    # Check if service already exists using index
+    if ($script:ServicesByNameIndex.ContainsKey($Name)) {
+        return $script:ServicesByNameIndex[$Name]
     }
 
     $serviceRefId = $script:ServiceRefIdCounter++
@@ -299,27 +667,34 @@ function Add-ServiceRecord {
         Name = $Name
     }
 
+    # Update index
+    $script:ServicesByNameIndex[$Name] = $serviceRefId
+
     return $serviceRefId
 }
 
 function Add-ResourceRecord {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ResourceName
+        [string]$ResourceName,
+        [Parameter(Mandatory = $false)]
+        [int]$ResourceRegistrationRefId = $null
     )
 
-    # Check if resource already exists
-    foreach ($resource in $script:Resources.Values) {
-        if ($resource.ResourceName -eq $ResourceName) {
-            return $resource.ResourceRefId
-        }
+    # Check if resource already exists using index
+    if ($script:ResourcesByNameIndex.ContainsKey($ResourceName)) {
+        return $script:ResourcesByNameIndex[$ResourceName]
     }
 
     $resourceRefId = $script:ResourceRefIdCounter++
     $script:Resources[$resourceRefId] = [PSCustomObject]@{
         ResourceRefId = $resourceRefId
         ResourceName = $ResourceName
+        ResourceRegistrationRefId = $ResourceRegistrationRefId
     }
+
+    # Update index
+    $script:ResourcesByNameIndex[$ResourceName] = $resourceRefId
 
     return $resourceRefId
 }
@@ -482,22 +857,6 @@ function Add-TestFunctionStepRecord {
     return $stepRefId
 }
 
-function Get-TestFunctionStepsByFunctionId {
-    <#
-    .SYNOPSIS
-    Get all test function steps for a specific function
-
-    .PARAMETER TestFunctionRefId
-    The TestFunction ID to get steps for
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TestFunctionRefId
-    )
-
-    return $script:TestFunctionSteps.Values | Where-Object { $_.TestFunctionRefId -eq $TestFunctionRefId } | Sort-Object StepIndex
-}
-
 function Get-AllTestFunctionSteps {
     <#
     .SYNOPSIS
@@ -537,153 +896,7 @@ function Get-TestFunctionStepsByReferenceType {
     return @()
 }
 
-function Update-TestFunctionStepStructRefId {
-    <#
-    .SYNOPSIS
-    Update the StructRefId for a TestFunctionStep record
 
-    .PARAMETER TestFunctionStepRefId
-    The TestFunctionStep ID to update
-
-    .PARAMETER StructRefId
-    The new StructRefId to set
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TestFunctionStepRefId,
-        [Parameter(Mandatory = $true)]
-        [int]$StructRefId
-    )
-
-    if ($script:TestFunctionSteps.ContainsKey($TestFunctionStepRefId)) {
-        $script:TestFunctionSteps[$TestFunctionStepRefId].StructRefId = $StructRefId
-        return $true
-    }
-
-    Write-Warning "TestFunctionStepRefId $TestFunctionStepRefId not found in database"
-    return $false
-}
-
-function Update-TestFunctionStepReferenceType {
-    <#
-    .SYNOPSIS
-    Update the ReferenceTypeId for a TestFunctionStep record
-
-    .PARAMETER TestFunctionStepRefId
-    The TestFunctionStep ID to update
-
-    .PARAMETER ReferenceTypeId
-    The new ReferenceTypeId to set
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TestFunctionStepRefId,
-        [Parameter(Mandatory = $true)]
-        [int]$ReferenceTypeId
-    )
-
-    if ($script:TestFunctionSteps.ContainsKey($TestFunctionStepRefId)) {
-        $script:TestFunctionSteps[$TestFunctionStepRefId].ReferenceTypeId = $ReferenceTypeId
-        return $true
-    }
-
-    Write-Warning "TestFunctionStepRefId $TestFunctionStepRefId not found in database"
-    return $false
-}
-
-function Update-TestFunctionStepStructVisibility {
-    <#
-    .SYNOPSIS
-    Update the StructVisibilityTypeId for a TestFunctionStep record
-
-    .PARAMETER TestFunctionStepRefId
-    The TestFunctionStep ID to update
-
-    .PARAMETER StructVisibilityTypeId
-    The new StructVisibilityTypeId to set (11=PRIVATE_REFERENCE, 12=PUBLIC_REFERENCE)
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TestFunctionStepRefId,
-        [Parameter(Mandatory = $true)]
-        [int]$StructVisibilityTypeId
-    )
-
-    if ($script:TestFunctionSteps.ContainsKey($TestFunctionStepRefId)) {
-        $script:TestFunctionSteps[$TestFunctionStepRefId].StructVisibilityTypeId = $StructVisibilityTypeId
-        return $true
-    }
-
-    Write-Warning "TestFunctionStepRefId $TestFunctionStepRefId not found in database"
-    return $false
-}
-
-function Update-IndirectConfigReferenceServiceImpact {
-    <#
-    .SYNOPSIS
-    Update the ServiceImpactTypeId for an IndirectConfigReference record
-
-    .PARAMETER IndirectRefId
-    The IndirectConfigReference ID to update
-
-    .PARAMETER ServiceImpactTypeId
-    The new ServiceImpactTypeId to set (14=SAME_SERVICE, 15=CROSS_SERVICE)
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$IndirectRefId,
-        [Parameter(Mandatory = $true)]
-        [int]$ServiceImpactTypeId
-    )
-
-    if ($script:IndirectConfigReferences.ContainsKey($IndirectRefId)) {
-        $script:IndirectConfigReferences[$IndirectRefId].ServiceImpactTypeId = $ServiceImpactTypeId
-        return $true
-    }
-
-    Write-Warning "IndirectRefId $IndirectRefId not found in database"
-    return $false
-}
-
-
-
-function Get-TestFunctionStepRefIdByIndex {
-    <#
-    .SYNOPSIS
-    Get TestFunctionStepRefId by TestFunctionRefId and step index (1-based) - O(1) lookup
-
-    .PARAMETER TestFunctionRefId
-    The TestFunction ID
-
-    .PARAMETER StepIndex
-    The 1-based step index within the function
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TestFunctionRefId,
-        [Parameter(Mandatory = $true)]
-        [int]$StepIndex
-    )
-
-    # Create composite key for O(1) lookup
-    $compositeKey = "$TestFunctionRefId-$StepIndex"
-
-    # Build index on first use if not exists
-    if (-not $script:TestFunctionStepIndex) {
-        $script:TestFunctionStepIndex = @{}
-        foreach ($step in $script:TestFunctionSteps.Values) {
-            $key = "$($step.TestFunctionRefId)-$($step.StepIndex)"
-            $script:TestFunctionStepIndex[$key] = $step.TestFunctionStepRefId
-        }
-    }
-
-    if ($script:TestFunctionStepIndex.ContainsKey($compositeKey)) {
-        return $script:TestFunctionStepIndex[$compositeKey]
-    }
-
-    # If no TestFunctionStep exists for this index, return 0 (silently - this is normal for functions without TestStep arrays)
-    return 0
-}
 
 function Add-DirectResourceReferenceRecord {
     <#
@@ -848,11 +1061,13 @@ function Add-TemplateFunctionRecord {
 function Add-TemplateCallChainRecord {
     <#
     .SYNOPSIS
-    Add template call chain record (replaces TemplateCalls + IndirectConfigReferences)
+    Add template call chain record (template → template call)
 
     .DESCRIPTION
-    Stores template → template call chains resolved by Replicode.
-    Supports both same-file (local) and cross-file template calls.
+    Stores template-to-template function calls found in fmt.Sprintf arguments.
+    Used to detect cross-file references when data source templates call resource templates.
+
+    Example: BackupProtectionPolicyFileShareDataSource.basic() calls BackupProtectionPolicyFileShareResource.basicDaily()
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -860,59 +1075,21 @@ function Add-TemplateCallChainRecord {
         [Parameter(Mandatory = $true)]
         [int]$TargetTemplateFunctionRefId,
         [Parameter(Mandatory = $true)]
-        [int]$SourceServiceRefId,
+        [int]$ReferenceTypeId,  # EMBEDDED_SELF, CROSS_FILE, or EXTERNAL_REFERENCE
         [Parameter(Mandatory = $true)]
-        [int]$TargetServiceRefId,
-        [Parameter(Mandatory = $true)]
-        [int]$ChainDepth,
-        [Parameter(Mandatory = $true)]
-        [bool]$CrossesServiceBoundary,
-        [Parameter(Mandatory = $true)]
-        [int]$ReferenceTypeId,
-        [Parameter(Mandatory = $true)]
-        [bool]$IsLocalCall
+        [int]$Line
     )
 
-    $chainRefId = $script:TemplateCallChainRefIdCounter++
-    $script:TemplateCallChain[$chainRefId] = [PSCustomObject]@{
-        ChainRefId = $chainRefId
+    $templateCallChainRefId = $script:TemplateCallChainRefIdCounter++
+    $script:TemplateCallChain[$templateCallChainRefId] = [PSCustomObject]@{
+        TemplateCallChainRefId = $templateCallChainRefId
         SourceTemplateFunctionRefId = $SourceTemplateFunctionRefId
         TargetTemplateFunctionRefId = $TargetTemplateFunctionRefId
-        SourceServiceRefId = $SourceServiceRefId
-        TargetServiceRefId = $TargetServiceRefId
-        ChainDepth = $ChainDepth
-        CrossesServiceBoundary = $CrossesServiceBoundary
         ReferenceTypeId = $ReferenceTypeId
-        IsLocalCall = $IsLocalCall
+        Line = $Line
     }
 
-    return $chainRefId
-}
-
-function Add-TemplateChainResourceRecord {
-    <#
-    .SYNOPSIS
-    Add junction table record linking template call chains to ultimate resource references
-
-    .DESCRIPTION
-    Stores which resources are ultimately referenced at the end of template call chains.
-    Replaces JSON arrays with proper relational design.
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$ChainRefId,
-        [Parameter(Mandatory = $true)]
-        [int]$ResourceRefId
-    )
-
-    $chainResourceRefId = $script:TemplateChainResourcesRefIdCounter++
-    $script:TemplateChainResources[$chainResourceRefId] = [PSCustomObject]@{
-        ChainResourceRefId = $chainResourceRefId
-        ChainRefId = $ChainRefId
-        ResourceRefId = $ResourceRefId
-    }
-
-    return $chainResourceRefId
+    return $templateCallChainRefId
 }
 
 function Add-TestStepRecord {
@@ -1305,6 +1482,28 @@ function Get-FileRecordByRefId {
     return $null
 }
 
+function Get-Resources {
+    <#
+    .SYNOPSIS
+    Get all resource records being analyzed
+
+    .OUTPUTS
+    Array of PSCustomObject - All resource records
+    #>
+    return $script:Resources.Values
+}
+
+function Get-ResourceRegistrations {
+    <#
+    .SYNOPSIS
+    Get all resource registration records
+
+    .OUTPUTS
+    Array of PSCustomObject - All resource registration records
+    #>
+    return $script:ResourceRegistrations.Values
+}
+
 function Get-Services {
     return $script:Services.Values
 }
@@ -1341,6 +1540,10 @@ function Get-TemplateFunctions {  # Renamed from Get-TestConfiguration
     return $script:TemplateFunctions.Values  # Renamed table
 }
 
+function Get-TemplateCallChains {
+    return $script:TemplateCallChain.Values
+}
+
 function Get-ExportDirectory {
     return $script:ExportDirectory
 }
@@ -1353,9 +1556,6 @@ function Export-DatabaseToCSV {
     param(
         [Parameter(Mandatory = $false)]
         [string]$ExportPath = $script:ExportDirectory,
-
-        [Parameter(Mandatory = $false)]
-        [string]$ItemColor = "Cyan",
 
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Yellow",
@@ -1417,12 +1617,20 @@ function Export-DatabaseToCSV {
             $headerLine = '"' + ($headerNames -join '","') + '"'
             $headerLine | Set-Content $FilePath
         }
-    }    try {
+    }
+
+    try {
         # Define empty row templates for each table
         $emptyTemplates = @{
+            ResourceRegistrations = @{
+                ResourceRegistrationRefId = $null
+                ServiceRefId = $null
+                ResourceName = ""
+            }
             Resources = @{
                 ResourceRefId = $null
                 ResourceName = ""
+                ResourceRegistrationRefId = $null
             }
             Services = @{
                 ServiceRefId = $null
@@ -1504,6 +1712,13 @@ function Export-DatabaseToCSV {
                 TemplateVariable = ""
                 TemplateMethod = ""
             }
+            TemplateCallChain = @{
+                TemplateCallChainRefId = $null
+                SourceTemplateFunctionRefId = $null
+                TargetTemplateFunctionRefId = $null
+                ReferenceTypeId = $null
+                Line = $null
+            }
             ReferenceTypes = @{
                 ReferenceTypeId = $null
                 ReferenceTypeName = ""
@@ -1512,46 +1727,88 @@ function Export-DatabaseToCSV {
 
         # Convert ReferenceTypes hashtable to array of objects for CSV export
         $referenceTypesArray = @()
-        foreach ($refType in $script:ReferenceTypes.GetEnumerator()) {
-            # $refType.Key = Integer ID, $refType.Value = PSCustomObject with ReferenceTypeId and ReferenceTypeName
-            $referenceTypesArray += [PSCustomObject]@{
-                ReferenceTypeId = $refType.Value.ReferenceTypeId
-                ReferenceTypeName = $refType.Value.ReferenceTypeName
+        if ($script:ReferenceTypes) {
+            foreach ($refType in $script:ReferenceTypes.GetEnumerator()) {
+                # $refType.Key = Integer ID, $refType.Value = PSCustomObject with ReferenceTypeId and ReferenceTypeName
+                $referenceTypesArray += [PSCustomObject]@{
+                    ReferenceTypeId = $refType.Value.ReferenceTypeId
+                    ReferenceTypeName = $refType.Value.ReferenceTypeName
+                }
             }
         }
 
         # Export each table to CSV with headers
-        Export-TableWithHeaders -Data @($script:Resources.Values) -FilePath (Join-Path $exportDir "Resources.csv") -EmptyRowTemplate $emptyTemplates.Resources
+        # Ensure we always pass arrays, even if empty (check both hashtable and .Values)
+        $resourceRegistrationsData = if ($script:ResourceRegistrations -and $script:ResourceRegistrations.Values) { @($script:ResourceRegistrations.Values) } else { @() }
+        $resourcesData = if ($script:Resources -and $script:Resources.Values) { @($script:Resources.Values) } else { @() }
+
+        Export-TableWithHeaders -Data $resourceRegistrationsData -FilePath (Join-Path $exportDir "ResourceRegistrations.csv") -EmptyRowTemplate $emptyTemplates.ResourceRegistrations
+        Export-TableWithHeaders -Data $resourcesData -FilePath (Join-Path $exportDir "Resources.csv") -EmptyRowTemplate $emptyTemplates.Resources
 
         # Add ResourceRefId = 1 to records during export (cold path) to avoid overhead during record creation (hot path)
-        $servicesWithResourceRef = @($script:Services.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
+        $servicesWithResourceRef = if ($script:Services -and $script:Services.Values) {
+            @(@($script:Services.Values) | ForEach-Object {
+                $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
+            })
+        } else { @() }
         Export-TableWithHeaders -Data $servicesWithResourceRef -FilePath (Join-Path $exportDir "Services.csv") -EmptyRowTemplate $emptyTemplates.Services
 
-        Export-TableWithHeaders -Data @($script:Files.Values) -FilePath (Join-Path $exportDir "Files.csv") -EmptyRowTemplate $emptyTemplates.Files
+        $filesData = if ($script:Files -and $script:Files.Values) { @($script:Files.Values) } else { @() }
+        Export-TableWithHeaders -Data $filesData -FilePath (Join-Path $exportDir "Files.csv") -EmptyRowTemplate $emptyTemplates.Files
 
-        $structsWithResourceRef = @($script:Structs.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
+        $structsWithResourceRef = if ($script:Structs -and $script:Structs.Values) {
+            @(@($script:Structs.Values) | ForEach-Object {
+                $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
+            })
+        } else { @() }
         Export-TableWithHeaders -Data $structsWithResourceRef -FilePath (Join-Path $exportDir "Structs.csv") -EmptyRowTemplate $emptyTemplates.Structs
 
-        $testFunctionsWithResourceRef = @($script:TestFunctions.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
+        $testFunctionsWithResourceRef = if ($script:TestFunctions -and $script:TestFunctions.Values) {
+            @(@($script:TestFunctions.Values) | ForEach-Object {
+                $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
+            })
+        } else { @() }
         Export-TableWithHeaders -Data $testFunctionsWithResourceRef -FilePath (Join-Path $exportDir "TestFunctions.csv") -EmptyRowTemplate $emptyTemplates.TestFunctions
-        Export-TableWithHeaders -Data @($script:TestSteps.Values) -FilePath (Join-Path $exportDir "TestFunctionSteps.csv") -EmptyRowTemplate $emptyTemplates.TestSteps
-        Export-TableWithHeaders -Data @($script:DirectResourceReferences.Values) -FilePath (Join-Path $exportDir "DirectResourceReferences.csv") -EmptyRowTemplate $emptyTemplates.DirectResourceReferences
-        Export-TableWithHeaders -Data @($script:IndirectConfigReferences.Values) -FilePath (Join-Path $exportDir "IndirectConfigReferences.csv") -EmptyRowTemplate $emptyTemplates.IndirectConfigReferences
 
-        $templateFunctionsWithResourceRef = @($script:TemplateFunctions.Values) | ForEach-Object {
-            $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-        }
+        $testStepsData = if ($script:TestSteps -and $script:TestSteps.Values) { @($script:TestSteps.Values) } else { @() }
+        Export-TableWithHeaders -Data $testStepsData -FilePath (Join-Path $exportDir "TestFunctionSteps.csv") -EmptyRowTemplate $emptyTemplates.TestSteps
+
+        $directResourceReferencesData = if ($script:DirectResourceReferences -and $script:DirectResourceReferences.Values) { @($script:DirectResourceReferences.Values) } else { @() }
+        Export-TableWithHeaders -Data $directResourceReferencesData -FilePath (Join-Path $exportDir "DirectResourceReferences.csv") -EmptyRowTemplate $emptyTemplates.DirectResourceReferences
+
+        $indirectConfigReferencesData = if ($script:IndirectConfigReferences -and $script:IndirectConfigReferences.Values) { @($script:IndirectConfigReferences.Values) } else { @() }
+        Export-TableWithHeaders -Data $indirectConfigReferencesData -FilePath (Join-Path $exportDir "IndirectConfigReferences.csv") -EmptyRowTemplate $emptyTemplates.IndirectConfigReferences
+
+        $templateFunctionsWithResourceRef = if ($script:TemplateFunctions -and $script:TemplateFunctions.Values) {
+            @(@($script:TemplateFunctions.Values) | ForEach-Object {
+                $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
+            })
+        } else { @() }
         Export-TableWithHeaders -Data $templateFunctionsWithResourceRef -FilePath (Join-Path $exportDir "TemplateFunctions.csv") -EmptyRowTemplate $emptyTemplates.TemplateFunctions
 
-        Export-TableWithHeaders -Data @($script:SequentialReferences.Values) -FilePath (Join-Path $exportDir "SequentialReferences.csv") -EmptyRowTemplate $emptyTemplates.SequentialReferences
-        Export-TableWithHeaders -Data @($script:TemplateReferences.Values) -FilePath (Join-Path $exportDir "TemplateReferences.csv") -EmptyRowTemplate $emptyTemplates.TemplateReferences
-        Export-TableWithHeaders -Data @($referenceTypesArray) -FilePath (Join-Path $exportDir "ReferenceTypes.csv") -EmptyRowTemplate $emptyTemplates.ReferenceTypes
+        $sequentialReferencesData = @()
+        if ($script:SequentialReferences -and $script:SequentialReferences.Values) {
+            $sequentialReferencesData = @($script:SequentialReferences.Values)
+        }
+        Export-TableWithHeaders -Data $sequentialReferencesData -FilePath (Join-Path $exportDir "SequentialReferences.csv") -EmptyRowTemplate $emptyTemplates.SequentialReferences
+
+        $templateReferencesData = @()
+        if ($script:TemplateReferences -and $script:TemplateReferences.Values) {
+            $templateReferencesData = @($script:TemplateReferences.Values)
+        }
+        Export-TableWithHeaders -Data $templateReferencesData -FilePath (Join-Path $exportDir "TemplateReferences.csv") -EmptyRowTemplate $emptyTemplates.TemplateReferences
+
+        $templateCallChainData = @()
+        if ($script:TemplateCallChain -and $script:TemplateCallChain.Values) {
+            $templateCallChainData = @($script:TemplateCallChain.Values)
+        }
+        Export-TableWithHeaders -Data $templateCallChainData -FilePath (Join-Path $exportDir "TemplateCallChain.csv") -EmptyRowTemplate $emptyTemplates.TemplateCallChain
+
+        $referenceTypesData = @()
+        if ($referenceTypesArray) {
+            $referenceTypesData = @($referenceTypesArray)
+        }
+        Export-TableWithHeaders -Data $referenceTypesData -FilePath (Join-Path $exportDir "ReferenceTypes.csv") -EmptyRowTemplate $emptyTemplates.ReferenceTypes
 
         # Calculate dynamic table count by counting actual CSV files in export directory
         $csvFiles = Get-ChildItem -Path $exportDir -Filter "*.csv" -File
@@ -1587,7 +1844,7 @@ function Invoke-TemplatePopulation {
     when configuration methods are discovered and analyzed. This function just reports the results.
     #>
 
-    Write-Host "`n=== TEMPLATE FUNCTIONS TABLE RESULTS ===" -ForegroundColor Cyan
+    Write-Host "=== TEMPLATE FUNCTIONS TABLE RESULTS ===" -ForegroundColor Cyan
     Write-Host "TemplateFunctions records populated during Phase 5: $($script:TemplateFunctions.Count)" -ForegroundColor Green
     Write-Host "=== TEMPLATE FUNCTIONS COMPLETED ===" -ForegroundColor Cyan
 }
@@ -1597,10 +1854,7 @@ function Get-DatabaseStats {
     .SYNOPSIS
     Get statistics about the current state of all database tables
     #>
-    param(
-        [Parameter(Mandatory = $false)]
-        [string]$ExportDirectory  # Not used in in-memory implementation, kept for compatibility
-    )
+    param()
 
     $stats = [PSCustomObject]@{
         # Map the in-memory database tables to expected property names
@@ -1612,6 +1866,7 @@ function Get-DatabaseStats {
 
         # Additional stats for completeness
         ResourcesTable = $script:Resources.Count
+        ResourceRegistrations = $script:ResourceRegistrations.Count
         Services = $script:Services.Count
         Files = $script:Files.Count
         Structs = $script:Structs.Count
@@ -1622,7 +1877,8 @@ function Get-DatabaseStats {
         TemplateFunctions = $script:TemplateFunctions.Count
         SequentialReferences = $script:SequentialReferences.Count
         TemplateReferences = $script:TemplateReferences.Count
-        TotalRecords = $script:Resources.Count + $script:Services.Count + $script:Files.Count + $script:Structs.Count + $script:TestFunctions.Count + $script:TestFunctionSteps.Count + $script:DirectResourceReferences.Count + $script:IndirectConfigReferences.Count + $script:TemplateFunctions.Count + $script:SequentialReferences.Count + $script:TemplateReferences.Count
+        TemplateCallChain = $script:TemplateCallChain.Count
+        TotalRecords = $script:Resources.Count + $script:ResourceRegistrations.Count + $script:Services.Count + $script:Files.Count + $script:Structs.Count + $script:TestFunctions.Count + $script:TestFunctionSteps.Count + $script:DirectResourceReferences.Count + $script:IndirectConfigReferences.Count + $script:TemplateFunctions.Count + $script:SequentialReferences.Count + $script:TemplateReferences.Count + $script:TemplateCallChain.Count
     }
 
     return $stats
@@ -1657,32 +1913,6 @@ function Get-StructsByFileRefId {
     }
 
     return @()
-}
-
-function Update-TestFunctionSequentialInfo {
-    <#
-    .SYNOPSIS
-    Update an existing TestFunction record with sequential entry point information
-
-    .PARAMETER TestFunctionRefId
-    The TestFunctionRefId to update
-
-    .PARAMETER SequentialEntryPointRefId
-    Foreign key to the entry point function that calls this function
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$TestFunctionRefId,
-        [Parameter(Mandatory = $false)]
-        [int]$SequentialEntryPointRefId = 0
-    )
-
-    if ($script:TestFunctions.ContainsKey($TestFunctionRefId)) {
-        $existingRecord = $script:TestFunctions[$TestFunctionRefId]
-        $existingRecord.SequentialEntryPointRefId = $SequentialEntryPointRefId
-    } else {
-        Write-Warning "TestFunctionRefId $TestFunctionRefId not found in database"
-    }
 }
 
 function Import-DatabaseFromCSV {
@@ -1749,6 +1979,7 @@ function Import-DatabaseFromCSV {
 
     # Clear all in-memory tables first
     $script:Resources.Clear()
+    $script:ResourceRegistrations.Clear()
     $script:Services.Clear()
     $script:Files.Clear()
     $script:Structs.Clear()
@@ -1762,6 +1993,7 @@ function Import-DatabaseFromCSV {
 
     # Clear performance indexes
     $script:FilePathToRefIdIndex.Clear()
+    $script:ResourceRegistrationsByNameIndex.Clear()
     $script:TestFunctionStepIndex = $null
     $script:StructsByFileIndex.Clear()
     $script:StructsByNameIndex.Clear()
@@ -1796,14 +2028,44 @@ function Import-DatabaseFromCSV {
         $resourcesData = Import-TableFromCSV -FilePath $resourcesPath -TableName "Resources"
         foreach ($row in $resourcesData) {
             $resourceRefId = [int]$row.ResourceRefId
+            $resourceRegistrationRefId = if ($row.ResourceRegistrationRefId) { [int]$row.ResourceRegistrationRefId } else { $null }
             $script:Resources[$resourceRefId] = [PSCustomObject]@{
                 ResourceRefId = $resourceRefId
                 ResourceName = $row.ResourceName
+                ResourceRegistrationRefId = $resourceRegistrationRefId
             }
         }
         Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Resources", $script:Resources.Count) -Highlights @(
             @{ Text = "Resources"; Color = $ItemColor }
             @{ Text = "$($script:Resources.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
+
+        # Import ResourceRegistrations (master mapping of all resources to services)
+        $resourceRegistrationsPath = Join-Path $DatabaseDirectory "ResourceRegistrations.csv"
+        $resourceRegistrationsData = Import-TableFromCSV -FilePath $resourceRegistrationsPath -TableName "ResourceRegistrations"
+        foreach ($row in $resourceRegistrationsData) {
+            $resourceRegistrationRefId = [int]$row.ResourceRegistrationRefId
+            $serviceRefId = [int]$row.ServiceRefId
+
+            $registration = [PSCustomObject]@{
+                ResourceRegistrationRefId = $resourceRegistrationRefId
+                ServiceRefId = $serviceRefId
+                ResourceName = $row.ResourceName
+            }
+            $script:ResourceRegistrations[$resourceRegistrationRefId] = $registration
+
+            # Update index for O(1) resource name lookups
+            $script:ResourceRegistrationsByNameIndex[$row.ResourceName] = $resourceRegistrationRefId
+
+            # Update counter
+            if ($resourceRegistrationRefId -ge $script:ResourceRegistrationRefIdCounter) {
+                $script:ResourceRegistrationRefIdCounter = $resourceRegistrationRefId + 1
+            }
+        }
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "ResourceRegistrations", $script:ResourceRegistrations.Count) -Highlights @(
+            @{ Text = "ResourceRegistrations"; Color = $ItemColor }
+            @{ Text = "$($script:ResourceRegistrations.Count)"; Color = $NumberColor }
             @{ Text = "records"; Color = $ItemColor }
         ) -BaseColor $BaseColor -InfoColor $InfoColor
 
@@ -1858,7 +2120,11 @@ function Import-DatabaseFromCSV {
                 $script:FileRefIdCounter = $fileRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Files", $script:Files.Count) -Highlights @(`n            @{ Text = "Files"; Color = $ItemColor }`n            @{ Text = "$($script:Files.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Files", $script:Files.Count) -Highlights @(
+            @{ Text = "Files"; Color = $ItemColor }
+            @{ Text = "$($script:Files.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import Structs
         $structsPath = Join-Path $DatabaseDirectory "Structs.csv"
@@ -1894,7 +2160,11 @@ function Import-DatabaseFromCSV {
                 $script:StructRefIdCounter = $structRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Structs", $script:Structs.Count) -Highlights @(`n            @{ Text = "Structs"; Color = $ItemColor }`n            @{ Text = "$($script:Structs.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "Structs", $script:Structs.Count) -Highlights @(
+            @{ Text = "Structs"; Color = $ItemColor }
+            @{ Text = "$($script:Structs.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TestFunctions
         $testFunctionsPath = Join-Path $DatabaseDirectory "TestFunctions.csv"
@@ -1928,7 +2198,11 @@ function Import-DatabaseFromCSV {
                 $script:FunctionRefIdCounter = $testFunctionRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TestFunctions", $script:TestFunctions.Count) -Highlights @(`n            @{ Text = "TestFunctions"; Color = $ItemColor }`n            @{ Text = "$($script:TestFunctions.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TestFunctions", $script:TestFunctions.Count) -Highlights @(
+            @{ Text = "TestFunctions"; Color = $ItemColor }
+            @{ Text = "$($script:TestFunctions.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TestSteps (AST-optimized schema)
         $testStepsPath = Join-Path $DatabaseDirectory "TestFunctionSteps.csv"
@@ -1963,7 +2237,11 @@ function Import-DatabaseFromCSV {
                 $script:TestFunctionStepsByRefTypeIndex[$referenceTypeId] += $testStepRefId
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TestSteps", $script:TestSteps.Count) -Highlights @(`n            @{ Text = "TestSteps"; Color = $ItemColor }`n            @{ Text = "$($script:TestSteps.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TestSteps", $script:TestSteps.Count) -Highlights @(
+            @{ Text = "TestSteps"; Color = $ItemColor }
+            @{ Text = "$($script:TestSteps.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import DirectResourceReferences
         $directReferencesPath = Join-Path $DatabaseDirectory "DirectResourceReferences.csv"
@@ -1990,7 +2268,11 @@ function Import-DatabaseFromCSV {
                 $script:DirectRefIdCounter = $directRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "DirectResourceReferences", $script:DirectResourceReferences.Count) -Highlights @(`n            @{ Text = "DirectResourceReferences"; Color = $ItemColor }`n            @{ Text = "$($script:DirectResourceReferences.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "DirectResourceReferences", $script:DirectResourceReferences.Count) -Highlights @(
+            @{ Text = "DirectResourceReferences"; Color = $ItemColor }
+            @{ Text = "$($script:DirectResourceReferences.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import IndirectConfigReferences
         $indirectReferencesPath = Join-Path $DatabaseDirectory "IndirectConfigReferences.csv"
@@ -2014,7 +2296,11 @@ function Import-DatabaseFromCSV {
                 $script:IndirectRefIdCounter = $indirectRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "IndirectConfigReferences", $script:IndirectConfigReferences.Count) -Highlights @(`n            @{ Text = "IndirectConfigReferences"; Color = $ItemColor }`n            @{ Text = "$($script:IndirectConfigReferences.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "IndirectConfigReferences", $script:IndirectConfigReferences.Count) -Highlights @(
+            @{ Text = "IndirectConfigReferences"; Color = $ItemColor }
+            @{ Text = "$($script:IndirectConfigReferences.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TemplateFunctions
         $templateFunctionsPath = Join-Path $DatabaseDirectory "TemplateFunctions.csv"
@@ -2040,7 +2326,11 @@ function Import-DatabaseFromCSV {
                 $script:TemplateFunctionRefIdCounter = $templateFunctionRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TemplateFunctions", $script:TemplateFunctions.Count) -Highlights @(`n            @{ Text = "TemplateFunctions"; Color = $ItemColor }`n            @{ Text = "$($script:TemplateFunctions.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TemplateFunctions", $script:TemplateFunctions.Count) -Highlights @(
+            @{ Text = "TemplateFunctions"; Color = $ItemColor }
+            @{ Text = "$($script:TemplateFunctions.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import SequentialReferences
         $sequentialReferencesPath = Join-Path $DatabaseDirectory "SequentialReferences.csv"
@@ -2062,7 +2352,11 @@ function Import-DatabaseFromCSV {
                 $script:SequentialRefIdCounter = $sequentialRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "SequentialReferences", $script:SequentialReferences.Count) -Highlights @(`n            @{ Text = "SequentialReferences"; Color = $ItemColor }`n            @{ Text = "$($script:SequentialReferences.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "SequentialReferences", $script:SequentialReferences.Count) -Highlights @(
+            @{ Text = "SequentialReferences"; Color = $ItemColor }
+            @{ Text = "$($script:SequentialReferences.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         # Import TemplateReferences
         $templateReferencesPath = Join-Path $DatabaseDirectory "TemplateReferences.csv"
@@ -2087,18 +2381,53 @@ function Import-DatabaseFromCSV {
                 $script:TemplateReferenceRefIdCounter = $templateReferenceRefId + 1
             }
         }
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TemplateReferences", $script:TemplateReferences.Count) -Highlights @(`n            @{ Text = "TemplateReferences"; Color = $ItemColor }`n            @{ Text = "$($script:TemplateFunctions.Count)"; Color = $NumberColor }`n            @{ Text = "records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TemplateReferences", $script:TemplateReferences.Count) -Highlights @(
+            @{ Text = "TemplateReferences"; Color = $ItemColor }
+            @{ Text = "$($script:TemplateReferences.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
+
+        # Import TemplateCallChain
+        $templateCallChainPath = Join-Path $DatabaseDirectory "TemplateCallChain.csv"
+        $templateCallChainData = Import-TableFromCSV -FilePath $templateCallChainPath -TableName "TemplateCallChain"
+        foreach ($row in $templateCallChainData) {
+            $templateCallChainRefId = [int]$row.TemplateCallChainRefId
+            $sourceTemplateFunctionRefId = if ($row.SourceTemplateFunctionRefId) { [int]$row.SourceTemplateFunctionRefId } else { 0 }
+            $targetTemplateFunctionRefId = if ($row.TargetTemplateFunctionRefId) { [int]$row.TargetTemplateFunctionRefId } else { 0 }
+            $referenceTypeId = if ($row.ReferenceTypeId) { [int]$row.ReferenceTypeId } else { 0 }
+            $line = if ($row.Line) { [int]$row.Line } else { 0 }
+
+            $script:TemplateCallChain[$templateCallChainRefId] = [PSCustomObject]@{
+                TemplateCallChainRefId = $templateCallChainRefId
+                SourceTemplateFunctionRefId = $sourceTemplateFunctionRefId
+                TargetTemplateFunctionRefId = $targetTemplateFunctionRefId
+                ReferenceTypeId = $referenceTypeId
+                Line = $line
+            }
+            # Update counter
+            if ($templateCallChainRefId -ge $script:TemplateCallChainRefIdCounter) {
+                $script:TemplateCallChainRefIdCounter = $templateCallChainRefId + 1
+            }
+        }
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1,-30} ({2,6} records)" -f "Loaded", "TemplateCallChain", $script:TemplateCallChain.Count) -Highlights @(
+            @{ Text = "TemplateCallChain"; Color = $ItemColor }
+            @{ Text = "$($script:TemplateCallChain.Count)"; Color = $NumberColor }
+            @{ Text = "records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
 
         $importElapsed = (Get-Date) - $importStart
 
         # Build summary statistics
-        $totalRecords = $script:Resources.Count + $script:ReferenceTypes.Count + $script:Services.Count +
+        $totalRecords = $script:Resources.Count + $script:ResourceRegistrations.Count + $script:ReferenceTypes.Count + $script:Services.Count +
                        $script:Files.Count + $script:Structs.Count + $script:TestFunctions.Count +
                        $script:TestFunctionSteps.Count + $script:DirectResourceReferences.Count +
                        $script:IndirectConfigReferences.Count + $script:TemplateFunctions.Count +
                        $script:SequentialReferences.Count + $script:TemplateReferences.Count
 
-        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1} Records" -f "Imported", $totalRecords) -Highlights @(`n            @{ Text = "$totalRecords"; Color = $NumberColor }`n            @{ Text = "Records"; Color = $ItemColor }`n        ) -BaseColor $BaseColor -InfoColor $InfoColor
+        Show-PhaseMessageMultiHighlight -Message ("{0,-9}: {1} Records" -f "Imported", $totalRecords) -Highlights @(
+            @{ Text = "$totalRecords"; Color = $NumberColor }
+            @{ Text = "Records"; Color = $ItemColor }
+        ) -BaseColor $BaseColor -InfoColor $InfoColor
         Show-PhaseCompletionGeneric -Description "Database Initialization" -DurationMs $([math]::Round($importElapsed.TotalMilliseconds, 0))
 
         return [PSCustomObject]@{
@@ -2154,28 +2483,22 @@ Export-ModuleMember -Function @(
 
     # Data insertion functions
     'Add-ServiceRecord',
+    'Add-ResourceRegistrationRecord',
     'Add-ResourceRecord',
     'Add-FileRecord',
     'Add-StructRecord',
     'Add-TestFunctionRecord',
     'Add-TestFunctionStepRecord',
     'Add-TestStepRecord',  # AST-based test step record
-    'Get-TestFunctionStepsByFunctionId',
     'Get-AllTestFunctionSteps',
     'Get-TestFunctionStepsByReferenceType',
-    'Update-TestFunctionStepStructRefId',
-    'Update-TestFunctionStepReferenceType',
-    'Update-TestFunctionStepStructVisibility',
-    'Update-IndirectConfigReferenceServiceImpact',
     'Get-StructById',
-    'Get-TestFunctionStepRefIdByIndex',
     'Add-DirectResourceReferenceRecord',
     'Add-IndirectConfigReferenceRecord',
     'Add-TemplateFunctionRecord',
-    'Add-TemplateCallChainRecord',  # AST-based template call chain record
+    'Add-TemplateCallChainRecord',
     'Add-SequentialReferenceRecord',
     'Add-TemplateReferenceRecord',
-    'Update-TestFunctionSequentialInfo',
     'Add-ServiceForFile',
 
     # Data retrieval functions
@@ -2192,13 +2515,18 @@ Export-ModuleMember -Function @(
     'Get-FileRefIdByPath',           # O(1) lookup by FilePath (indexed)
     'Get-FilePathByRefId',           # O(1) lookup by FileRefId
     'Get-FileRecordByRefId',         # O(1) lookup by FileRefId
+    'Get-Resources',
+    'Get-ResourceRegistrations',
+    'Get-ResourceRegistrationByName',
     'Get-Services',
     'Get-ServiceRefIdByFilePath',
     'Get-TemplateFunctions',
+    'Get-TemplateCallChains',
     'Get-TemplateReferences',
     'Get-StructsByFileRefId',
     'Get-ReferenceTypeName',
-    'Get-ReferenceTypeId'
+    'Get-ReferenceTypeId',
+    'Get-FunctionVisibilityType'
 ) -Variable @(
     'ReferenceTypes'
 )

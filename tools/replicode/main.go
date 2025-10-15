@@ -14,14 +14,15 @@ import (
 
 // FunctionInfo represents a function discovered in the code
 type FunctionInfo struct {
-	File         string
-	Line         int
-	FunctionName string
-	ReceiverType string // e.g., "PrivateEndpointResource"
-	ReceiverVar  string // e.g., "r"
-	IsTestFunc   bool
-	IsExported   bool
-	ServiceName  string // NEW: Service extracted from file path (e.g., "network")
+	File             string
+	Line             int
+	FunctionName     string
+	ReceiverType     string // e.g., "PrivateEndpointResource"
+	ReceiverVar      string // e.g., "r"
+	IsTestFunc       bool
+	IsDataSourceTest bool // true if calls data.DataSourceTest, false if calls data.ResourceTest
+	IsExported       bool
+	ServiceName      string // NEW: Service extracted from file path (e.g., "network")
 }
 
 // FunctionCall represents a function call site
@@ -70,14 +71,14 @@ type TemplateFunctionCall struct {
 	SourceService  string `json:"source_service"` // NEW: Service of source
 	SourceLine     int    `json:"source_line"`
 
-	TargetExpr     string `json:"target_expr"`     // Full expression: r.template(data)
-	TargetVariable string `json:"target_variable"` // Variable: r
-	TargetMethod   string `json:"target_method"`   // Method: template
-	TargetStruct   string `json:"target_struct"`   // Resolved struct type
-	TargetService  string `json:"target_service"`  // NEW: Service of target
-	IsLocalCall    bool   `json:"is_local_call"`
-	TargetFile     string `json:"target_file"`
-	TargetLine     int    `json:"target_line"`
+	TargetExpr      string `json:"target_expr"`       // Full expression: r.template(data)
+	TargetVariable  string `json:"target_variable"`   // Variable: r
+	TargetMethod    string `json:"target_method"`     // Method: template
+	TargetStruct    string `json:"target_struct"`     // Resolved struct type
+	TargetService   string `json:"target_service"`    // NEW: Service of target
+	ReferenceTypeId int    `json:"reference_type_id"` // 3=EMBEDDED_SELF, 2=CROSS_FILE, 10=EXTERNAL_REFERENCE
+	TargetFile      string `json:"target_file"`
+	TargetLine      int    `json:"target_line"`
 }
 
 // SequentialReference represents a sequential test call (t.Run or RunTestsInSequence)
@@ -136,7 +137,6 @@ var (
 	filePath     = flag.String("file", "", "Go file to analyze")
 	repoRoot     = flag.String("reporoot", "", "Repository root directory (for relative path conversion)")
 	resourceName = flag.String("resourcename", "", "Target resource name to filter direct references (e.g., azurerm_resource_group)")
-	verbose      = flag.Bool("verbose", false, "Verbose output")
 )
 
 // toRelativePath converts an absolute file path to relative based on repository root
@@ -189,13 +189,15 @@ func main() {
 	// Extract data using absolute paths throughout
 	functions := extractFunctions(file, fset, *filePath)
 	// Enrich test functions with struct information from their body
-	enrichTestFunctionsWithStructInfo(file, fset, *filePath, &functions)
+	enrichTestFunctionsWithStructInfo(file, fset, &functions)
+	// Detect if test functions are data source tests or resource tests
+	enrichTestFunctionsWithTestType(file, fset, &functions)
 	calls := extractFunctionCalls(file, fset, *filePath, functions)
 	imports := extractImports(file)
 	testSteps := extractTestSteps(file, fset, *filePath, functions)
 	templateCalls := extractTemplateCalls(file, fset, *filePath, functions)
 	sequentialRefs := extractSequentialReferences(file, fset, *filePath, functions)
-	directRefs := extractDirectResourceReferences(file, fset, *filePath, functions, *resourceName)
+	directRefs := extractDirectResourceReferences(file, *filePath, functions, *resourceName)
 
 	// Detect patterns (sequential, map-based, anonymous functions)
 	patterns := DetectPatterns(file, *filePath)
@@ -214,12 +216,27 @@ func main() {
 		testSteps[i].SourceFile = toRelativePath(testSteps[i].SourceFile)
 		if testSteps[i].TargetFile != "" {
 			testSteps[i].TargetFile = toRelativePath(testSteps[i].TargetFile)
+			// NOW CORRECTLY SET IsLocalCall based on actual file comparison
+			testSteps[i].IsLocalCall = (testSteps[i].SourceFile == testSteps[i].TargetFile)
+		} else {
+			// If we couldn't resolve target file, assume it's in the same file
+			testSteps[i].IsLocalCall = true
 		}
 	}
 	for i := range templateCalls {
 		templateCalls[i].SourceFile = toRelativePath(templateCalls[i].SourceFile)
 		if templateCalls[i].TargetFile != "" {
 			templateCalls[i].TargetFile = toRelativePath(templateCalls[i].TargetFile)
+			// Set ReferenceTypeId based on actual file comparison
+			if templateCalls[i].SourceFile == templateCalls[i].TargetFile {
+				templateCalls[i].ReferenceTypeId = 3 // EMBEDDED_SELF (same file)
+			} else {
+				templateCalls[i].ReferenceTypeId = 2 // CROSS_FILE (different file, both analyzed)
+			}
+		} else {
+			// If we couldn't resolve target file, assume it's EXTERNAL (cross-file)
+			// This happens when template calls a function in a different file not analyzed yet
+			templateCalls[i].ReferenceTypeId = 10 // EXTERNAL_REFERENCE (unresolved target)
 		}
 	}
 	for i := range sequentialRefs {
@@ -359,8 +376,8 @@ func extractFunctions(file *ast.File, fset *token.FileSet, filename string) []Fu
 				receiverTypeName = recvType.Name
 			}
 
-			// Only track methods on XxxResource structs (pointer or value receiver)
-			if strings.HasSuffix(receiverTypeName, "Resource") {
+			// Only track methods on XxxResource or XxxDataSource structs (pointer or value receiver)
+			if strings.HasSuffix(receiverTypeName, "Resource") || strings.HasSuffix(receiverTypeName, "DataSource") {
 				hasResourceReceiver = true
 
 				// Check if returns string
@@ -380,7 +397,7 @@ func extractFunctions(file *ast.File, fset *token.FileSet, filename string) []Fu
 		// Accept function only if it matches one of our criteria:
 		// - Test function (Test* or testAcc*)
 		// - Resource constructor (newXxxResource returning *XxxResource)
-		// - Resource method returning string (template method)
+		// - Resource/DataSource method returning string (template method)
 		if !isTestFunc && !isResourceConstructor && !(hasResourceReceiver && returnsString) {
 			return true
 		}
@@ -426,7 +443,7 @@ func extractFunctions(file *ast.File, fset *token.FileSet, filename string) []Fu
 
 // enrichTestFunctionsWithStructInfo finds struct assignments in test function bodies
 // and updates the ReceiverType for test functions (which are not methods)
-func enrichTestFunctionsWithStructInfo(file *ast.File, fset *token.FileSet, filePath string, functions *[]FunctionInfo) {
+func enrichTestFunctionsWithStructInfo(file *ast.File, fset *token.FileSet, functions *[]FunctionInfo) {
 	// Build function return type map (for resolving function calls)
 	functionReturnTypes := extractFunctionReturnTypes(file)
 
@@ -512,6 +529,64 @@ func enrichTestFunctionsWithStructInfo(file *ast.File, fset *token.FileSet, file
 						fn.ReceiverVar = varName
 						return false // Found it, stop searching
 					}
+				}
+			}
+
+			return true
+		})
+
+		return true
+	})
+}
+
+// enrichTestFunctionsWithTestType detects if test functions call data.DataSourceTest or data.ResourceTest
+func enrichTestFunctionsWithTestType(file *ast.File, fset *token.FileSet, functions *[]FunctionInfo) {
+	// Create map of line -> function for lookup
+	lineToFunc := make(map[int]*FunctionInfo)
+	for i := range *functions {
+		fn := &(*functions)[i]
+		if fn.IsTestFunc {
+			lineToFunc[fn.Line] = fn
+		}
+	}
+
+	// Visit each function and look for data.DataSourceTest or data.ResourceTest calls
+	ast.Inspect(file, func(n ast.Node) bool {
+		funcDecl, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+
+		// Only process test functions
+		funcLine := fset.Position(funcDecl.Pos()).Line
+		fn, exists := lineToFunc[funcLine]
+		if !exists {
+			return true
+		}
+
+		// Search function body for data.DataSourceTest or data.ResourceTest calls
+		ast.Inspect(funcDecl.Body, func(n2 ast.Node) bool {
+			callExpr, ok := n2.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+
+			// Check if this is a selector expression (e.g., data.DataSourceTest)
+			selExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+
+			// Check if the selector is on "data" identifier
+			if ident, ok := selExpr.X.(*ast.Ident); ok && ident.Name == "data" {
+				methodName := selExpr.Sel.Name
+				switch methodName {
+				case "DataSourceTest":
+					fn.IsDataSourceTest = true
+					return false // Found it, stop searching this function
+				case "ResourceTest":
+					fn.IsDataSourceTest = false
+					return false // Found it, stop searching this function
 				}
 			}
 
@@ -1205,17 +1280,17 @@ func extractTemplateCallsFromExpr(expr ast.Expr, currentFunc *FunctionInfo, file
 	}
 
 	// Track ALL template calls (same-file + cross-file) for complete dependency chains
-	// Mark same-file calls with IsLocalCall flag, but ALWAYS append them
+	// Set ReferenceTypeId based on whether target is in same file, but ALWAYS append them
 	if templateCall.TargetStruct != "" && templateCall.TargetMethod != "" {
 		key := templateCall.TargetStruct + "." + templateCall.TargetMethod
 		if _, existsInSameFile := methodToFunc[key]; existsInSameFile {
-			// Same-file call - mark as local (internal template composition)
-			templateCall.IsLocalCall = true
+			// Same-file call - mark as EMBEDDED_SELF (internal template composition)
+			templateCall.ReferenceTypeId = 3 // EMBEDDED_SELF
 			// Determine target service from the same file (use current function's service)
 			templateCall.TargetService = currentFunc.ServiceName
 		} else {
-			// Cross-file call - mark as non-local
-			templateCall.IsLocalCall = false
+			// Cross-file call - mark as CROSS_FILE (will be verified later, might become EXTERNAL_REFERENCE)
+			templateCall.ReferenceTypeId = 2 // CROSS_FILE (assumes target exists in another analyzed file)
 			// Determine target service by looking up the method in functions
 			for _, fn := range functions {
 				if fn.ReceiverType == templateCall.TargetStruct && fn.FunctionName == templateCall.TargetMethod {
@@ -1490,9 +1565,10 @@ func extractSequentialReferences(file *ast.File, fset *token.FileSet, filePath s
 // extractDirectResourceReferences extracts direct Azure resource references from template function bodies
 // Parses HCL strings returned by template functions to find:
 // 1. resource "azurerm_xxx" "test" { ... } → RESOURCE_BLOCK
-// 2. azurerm_xxx.test.attribute → ATTRIBUTE_REFERENCE
+// 2. data "azurerm_xxx" "test" { ... } → DATA_SOURCE_BLOCK
+// 3. azurerm_xxx.test.attribute → ATTRIBUTE_REFERENCE
 // Only extracts references matching targetResource (e.g., only azurerm_resource_group refs)
-func extractDirectResourceReferences(file *ast.File, fset *token.FileSet, filePath string, functions []FunctionInfo, targetResource string) []DirectResourceReference {
+func extractDirectResourceReferences(file *ast.File, filePath string, functions []FunctionInfo, targetResource string) []DirectResourceReference {
 	var directRefs []DirectResourceReference
 
 	// Build a map of template functions (non-test functions that return strings)
@@ -1524,7 +1600,7 @@ func extractDirectResourceReferences(file *ast.File, fset *token.FileSet, filePa
 		}
 
 		// Extract string literals from return statements and fmt.Sprintf calls
-		hclContent := extractHCLContentFromFunction(funcDecl, fset)
+		hclContent := extractHCLContentFromFunction(funcDecl)
 		if hclContent == "" {
 			return true
 		}
@@ -1541,7 +1617,7 @@ func extractDirectResourceReferences(file *ast.File, fset *token.FileSet, filePa
 
 // extractHCLContentFromFunction extracts HCL string content from a template function
 // Looks for return statements with string literals or fmt.Sprintf calls
-func extractHCLContentFromFunction(funcDecl *ast.FuncDecl, fset *token.FileSet) string {
+func extractHCLContentFromFunction(funcDecl *ast.FuncDecl) string {
 	var hclContent strings.Builder
 
 	// Walk the function body to find return statements
@@ -1597,18 +1673,27 @@ func parseHCLForResourceReferences(hclContent, templateFunc, templateFile string
 		// Pattern 1: resource "azurerm_xxx" "name" {
 		// Pattern 2: data "azurerm_xxx" "name" {
 		if strings.HasPrefix(trimmed, "resource \"azurerm_") || strings.HasPrefix(trimmed, "data \"azurerm_") {
+			// Determine if this is a data source or resource block
+			isDataSource := strings.HasPrefix(trimmed, "data \"azurerm_")
+
 			// Extract resource name
 			parts := strings.Fields(trimmed)
 			if len(parts) >= 2 {
 				resourceName := strings.Trim(parts[1], "\"")
 				// Only add if it matches targetResource (or if no filter specified)
 				if strings.HasPrefix(resourceName, "azurerm_") && (targetResource == "" || resourceName == targetResource) {
+					// Set reference type based on whether it's a data source or resource
+					refType := "RESOURCE_BLOCK"
+					if isDataSource {
+						refType = "DATA_SOURCE_BLOCK"
+					}
+
 					refs = append(refs, DirectResourceReference{
 						TemplateFunction: templateFunc,
 						TemplateFile:     templateFile,
 						TemplateLine:     templateLine,
 						ResourceName:     resourceName,
-						ReferenceType:    "RESOURCE_BLOCK",
+						ReferenceType:    refType,
 						Context:          trimmed,
 						ContextLine:      lineNum + 1,
 					})
@@ -1703,13 +1788,14 @@ func analyzeTemplateCallExpr(expr ast.Expr, fset *token.FileSet, source string) 
 		case *ast.Ident:
 			// Pattern: r.template(data) - variable.method
 			templateCall.TargetVariable = x.Name
-			templateCall.IsLocalCall = true
+			// ReferenceTypeId will be determined later based on file comparison
+			templateCall.ReferenceTypeId = 3 // Default to EMBEDDED_SELF (will be updated if cross-file)
 
 		case *ast.CompositeLit:
 			// Pattern: StructName{}.method(data) - direct struct instantiation
 			if ident, ok := x.Type.(*ast.Ident); ok {
 				templateCall.TargetStruct = ident.Name
-				templateCall.IsLocalCall = true
+				// ReferenceTypeId will be determined later by checking if the method exists in the same file
 			}
 		}
 

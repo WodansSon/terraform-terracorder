@@ -78,9 +78,14 @@ function Import-FunctionsFromAST {
 
     $testFunctionIds = @{}
     $templateFunctionIds = @{}
+    $templateFunctionFileRefs = @{}  # Maps TemplateFunctionId -> FileRefId
 
     if (-not $ASTData.functions) {
-        return @{ TestFunctions = $testFunctionIds; TemplateFunctions = $templateFunctionIds }
+        return @{
+            TestFunctions = $testFunctionIds
+            TemplateFunctions = $templateFunctionIds
+            TemplateFunctionFileRefs = $templateFunctionFileRefs
+        }
     }
 
     $filePath = $ASTData.file_path
@@ -96,12 +101,16 @@ function Import-FunctionsFromAST {
                 $func.FunctionName
             }
 
+            # Determine function visibility based on Go naming convention (uppercase = public, lowercase = private)
+            $visibilityTypeId = Get-FunctionVisibilityType -FunctionName $func.FunctionName
+
             $testFuncId = Add-TestFunctionRecord `
                 -FileRefId $FileRefId `
                 -StructRefId $structRefId `
                 -FunctionName $func.FunctionName `
                 -Line $func.Line `
-                -TestPrefix $testPrefix
+                -TestPrefix $testPrefix `
+                -ReferenceTypeRefId $visibilityTypeId
 
             # Store with File:FunctionName key for global lookups (needed for sequential references)
             $globalKey = "$($filePath):$($func.FunctionName)"
@@ -127,6 +136,8 @@ function Import-FunctionsFromAST {
             if (-not [string]::IsNullOrWhiteSpace($func.ReceiverType)) {
                 $key = "$($func.ReceiverType).$($func.FunctionName)"
                 $templateFunctionIds[$key] = $templateFuncId
+                # Track FileRefId for this template function
+                $templateFunctionFileRefs[[int]$templateFuncId] = $FileRefId
             }
 
             # ALSO store by File:Function key for direct resource reference lookups
@@ -135,14 +146,20 @@ function Import-FunctionsFromAST {
         }
     }
 
-    return @{ TestFunctions = $testFunctionIds; TemplateFunctions = $templateFunctionIds }
+    return @{
+        TestFunctions = $testFunctionIds
+        TemplateFunctions = $templateFunctionIds
+        TemplateFunctionFileRefs = $templateFunctionFileRefs
+    }
 }
 
 function Import-TestStepsFromAST {
     param(
         [object]$ASTData,
         [hashtable]$TestFunctionIds,
-        [hashtable]$TemplateFunctionIds
+        [hashtable]$TemplateFunctionIds,
+        [int]$FileRefId,  # The test file's FileRefId
+        [hashtable]$TemplateFunctionFileRefs  # Maps TemplateFunctionId -> FileRefId
     )
 
     if (-not $ASTData.test_steps) {
@@ -167,8 +184,15 @@ function Import-TestStepsFromAST {
         $targetServiceRefId = Get-OrCreateServiceId -ServiceName $step.config_service
         $targetStructRefId = Get-OrCreateStructId -StructName $step.config_struct
 
-        # Determine reference type
-        $referenceTypeName = if ($step.is_local_call -eq $true) { "SAME_SERVICE" } else { "CROSS_SERVICE" }
+        # Determine reference type based on FILE LOCATION (comparing FileRefIds)
+        # Compare test file's FileRefId vs template function's FileRefId
+        $templateFileRefId = $TemplateFunctionFileRefs[[int]$templateFuncId]
+
+        $referenceTypeName = if ($FileRefId -eq $templateFileRefId) {
+            "EMBEDDED_SELF"  # Same file
+        } else {
+            "CROSS_FILE"  # Different file
+        }
         $referenceTypeId = Get-ReferenceTypeId -ReferenceTypeName $referenceTypeName
 
         # Add test step record
@@ -200,11 +224,33 @@ function Import-TemplateCallsFromAST {
             continue
         }
 
-        # Get target template function ID
+        # Get target template function ID (may not exist yet if cross-file)
         $targetKey = "$($call.target_struct).$($call.target_method)"
         $targetTemplateFuncId = $TemplateFunctionIds[$targetKey]
-        if (-not $targetTemplateFuncId) {
-            continue
+
+        # Use ReferenceTypeId directly from replicode output
+        # Replicode now outputs: 3=EMBEDDED_SELF, 2=CROSS_FILE, 10=EXTERNAL_REFERENCE
+        # NOTE: Replicode analyzes files independently, so it can't resolve cross-file targets
+        # We need to upgrade EXTERNAL_REFERENCE to CROSS_FILE if target exists in database
+        $referenceTypeId = $call.reference_type_id
+
+        # Adjust ReferenceTypeId based on whether target exists in database
+        if ($targetTemplateFuncId) {
+            # Target found in database
+            if ($referenceTypeId -eq 10) {
+                # Replicode marked as EXTERNAL because it couldn't resolve target file
+                # But we found the target in our database, so upgrade to CROSS_FILE
+                $referenceTypeId = 2  # CROSS_FILE
+            }
+            # If already 3 (EMBEDDED_SELF) or 2 (CROSS_FILE), keep it
+        }
+        else {
+            # Target not found in database - keep as EXTERNAL_REFERENCE
+            $targetTemplateFuncId = 0
+            if ($referenceTypeId -ne 10) {
+                # Override to EXTERNAL_REFERENCE if not already set
+                $referenceTypeId = 10
+            }
         }
 
         # Get source template function ID using reverse lookup
@@ -218,39 +264,27 @@ function Import-TemplateCallsFromAST {
             continue
         }
 
-        # Get or create service IDs
-        $sourceServiceRefId = Get-OrCreateServiceId -ServiceName $call.source_service
-        $targetServiceRefId = Get-OrCreateServiceId -ServiceName $call.target_service
-
-        # Determine reference type
-        $referenceTypeName = if ($call.is_local_call -eq $true) { "SAME_SERVICE" } else { "CROSS_SERVICE" }
-        $referenceTypeId = Get-ReferenceTypeId -ReferenceTypeName $referenceTypeName
-
-        # Determine if crosses service boundary
-        $crossesServiceBoundary = if ($call.source_service -ne $call.target_service) { 1 } else { 0 }
-
         # Add template call chain record
         [void](Add-TemplateCallChainRecord `
             -SourceTemplateFunctionRefId $sourceTemplateFuncId `
             -TargetTemplateFunctionRefId $targetTemplateFuncId `
-            -SourceServiceRefId $sourceServiceRefId `
-            -TargetServiceRefId $targetServiceRefId `
-            -ChainDepth 1 `
-            -CrossesServiceBoundary $crossesServiceBoundary `
             -ReferenceTypeId $referenceTypeId `
-            -IsLocalCall ($call.is_local_call -eq $true))
+            -Line $call.line)
     }
 }
 
-function Build-LegacyReferenceTablesFromTestSteps {
+function Build-IndirectConfigReferences {
     <#
     .SYNOPSIS
     Build TemplateReferences and IndirectConfigReferences tables from TestSteps
 
     .DESCRIPTION
-    The AST schema uses TestSteps with direct FK relationships, but the original
-    blast radius analysis expects TemplateReferences and IndirectConfigReferences tables.
-    This function generates those legacy tables from the modern TestSteps data.
+    Converts TestSteps (with direct FK relationships) into TemplateReferences and
+    IndirectConfigReferences tables for blast radius analysis.
+
+    This function analyzes test steps to identify:
+    - Which template functions are called by each test step (TemplateReferences)
+    - The service impact of those references (IndirectConfigReferences with ServiceImpactTypeId)
 
     IMPORTANT: This function is called multiple times (Phase 2, Phase 2.5), so it only
     processes NEW test steps that haven't been converted yet (prevents duplicates).
@@ -309,13 +343,30 @@ function Build-LegacyReferenceTablesFromTestSteps {
             -TemplateMethod $templateMethod
 
         # Create IndirectConfigReference record (derived from service comparison)
-        # Get test function's service
-        $testFuncService = $testFunc.ServiceRefId
-        $templateService = $step.TargetServiceRefId
+        # ServiceImpactTypeId compares the test function's service vs target struct's service
+        # This is different from ReferenceTypeId which compares file locations
+        # Get-FileRecordByRefId uses in-memory hashtable lookup (not file I/O)
+        $testFunc = Get-TestFunctionById -TestFunctionRefId $step.TestFunctionRefId
+        $testFile = Get-FileRecordByRefId -FileRefId $testFunc.FileRefId
+        $testServiceId = $testFile.ServiceRefId
+        $targetServiceId = $step.TargetServiceRefId
 
-        # Determine service impact type
-        $serviceImpactTypeName = if ($testFuncService -eq $templateService) { "SAME_SERVICE" } else { "CROSS_SERVICE" }
-        $serviceImpactTypeId = Get-ReferenceTypeId -ReferenceTypeName $serviceImpactTypeName
+        # IMPORTANT: TargetServiceRefId = 0 means unresolved/external reference
+        # Mark as EXTERNAL_REFERENCE (10) instead of CROSS_SERVICE
+        # Convert to int for proper comparison (may be string from CSV)
+        $targetServiceIdInt = if ($targetServiceId) { [int]$targetServiceId } else { 0 }
+
+        if ($targetServiceIdInt -gt 0) {
+            $serviceImpactTypeName = if ($testServiceId -eq $targetServiceIdInt) {
+                "SAME_SERVICE"
+            } else {
+                "CROSS_SERVICE"
+            }
+            $serviceImpactTypeId = Get-ReferenceTypeId -ReferenceTypeName $serviceImpactTypeName
+        } else {
+            # Unresolved - mark as EXTERNAL_REFERENCE (10)
+            $serviceImpactTypeId = Get-ReferenceTypeId -ReferenceTypeName "EXTERNAL_REFERENCE"
+        }
 
         # Add indirect reference
         [void](Add-IndirectConfigReferenceRecord `
@@ -351,6 +402,19 @@ function Import-ASTOutput {
     $processedFiles = 0
     $failedFiles = 0
 
+    # Sort files to process resources before data sources
+    # This ensures cross-file template calls from data sources to resources are properly resolved
+    # Resource files: *_resource_test.go
+    # Data source files: *_data_source_test.go
+    $sortedTestFiles = $TestFiles | Sort-Object {
+        if ($_ -like '*_data_source_test.go') {
+            return 1  # Process data sources last
+        }
+        else {
+            return 0  # Process resources first
+        }
+    }
+
     Show-PhaseMessageMultiHighlight -Message "Processing $totalFiles Test Files With Replicode..." -Highlights @(
         @{ Text = "$totalFiles"; Color = $NumberColor }
         @{ Text = "Replicode"; Color = $ItemColor }
@@ -358,36 +422,42 @@ function Import-ASTOutput {
 
     # Process files in parallel for performance
     $progressCounter = 0
-    $results = $TestFiles | ForEach-Object -ThrottleLimit $Global:ThreadCount -Parallel {
-        $file = $_
-        $replicodePath = $using:ASTAnalyzerPath
-        $repoRoot = $using:RepoRoot
-        $resourceName = $using:ResourceName
+    $results = $sortedTestFiles | ForEach-Object -ThrottleLimit $Global:ThreadCount -Parallel {
+            $file = $_
+            $replicodePath = $using:ASTAnalyzerPath
+            $repoRoot = $using:RepoRoot
+            $resourceName = $using:ResourceName
 
-        try {
-            # Run Replicode with resourcename filter
-            $output = & $replicodePath -file $file -reporoot $repoRoot -resourcename $resourceName 2>&1
+            try {
+                # Run Replicode with resourcename filter
+                # Ensure path is valid before attempting to execute
+                if ([string]::IsNullOrWhiteSpace($replicodePath)) {
+                    return @{ Success = $false; File = $file; Error = "Replicode path is null or empty" }
+                }
 
-            if ($LASTEXITCODE -ne 0) {
-                return @{ Success = $false; File = $file; Error = "Exit code $LASTEXITCODE" }
+                $output = & $replicodePath -file $file -reporoot $repoRoot -resourcename $resourceName 2>&1
+
+                if ($LASTEXITCODE -ne 0) {
+                    return @{ Success = $false; File = $file; Error = "Exit code $LASTEXITCODE" }
+                }
+
+                # Parse JSON - join all output lines first
+                $jsonText = $output -join "`n"
+                $astData = $jsonText | ConvertFrom-Json
+
+                return @{ Success = $true; File = $file; ASTData = $astData }
             }
-
-            # Parse JSON
-            $astData = $output | ConvertFrom-Json
-
-            return @{ Success = $true; File = $file; ASTData = $astData }
+            catch {
+                return @{ Success = $false; File = $file; Error = $_.Exception.Message }
+            }
+        } | ForEach-Object {
+            # Progress indicator (runs in main thread)
+            $progressCounter++
+            if ($progressCounter % 50 -eq 0 -or $progressCounter -eq $totalFiles) {
+                Show-InlineProgress -Current $progressCounter -Total $totalFiles -Activity "Processing Files"
+            }
+            $_  # Pass through the result
         }
-        catch {
-            return @{ Success = $false; File = $file; Error = $_.Exception.Message }
-        }
-    } | ForEach-Object {
-        # Progress indicator (runs in main thread)
-        $progressCounter++
-        if ($progressCounter % 50 -eq 0 -or $progressCounter -eq $totalFiles) {
-            Show-InlineProgress -Current $progressCounter -Total $totalFiles -Activity "Processing Files"
-        }
-        $_  # Pass through the result
-    }
 
     # Show final completion
     Show-InlineProgress -Current $totalFiles -Total $totalFiles -Activity "Processing Files" -Completed
@@ -400,8 +470,9 @@ function Import-ASTOutput {
 
     $globalTestFunctionIds = @{}
     $globalTemplateFunctionIds = @{}
+    $globalTemplateFunctionFileRefs = @{}  # Maps TemplateFunctionId -> FileRefId (for ReferenceTypeId calculation)
     $templateFunctionNameToKey = @{}  # FunctionName -> Struct.FunctionName
-    $fileData = @()  # Array, not hashtable!
+    $fileData = @()  # Array for storing file data for Pass 2
 
     # Progress tracking for Pass 1
     $pass1Counter = 0
@@ -458,9 +529,13 @@ function Import-ASTOutput {
                     $templateFunctionNameToKey[$funcName] = $key
                 }
             }
+            # Merge template function FileRef mappings
+            foreach ($funcId in $functionMaps.TemplateFunctionFileRefs.Keys) {
+                $globalTemplateFunctionFileRefs[$funcId] = $functionMaps.TemplateFunctionFileRefs[$funcId]
+            }
 
-            # Store for Pass 2
-            $fileData += @{ ASTData = $astData; File = $file }
+            # Store for Pass 2 (include FileRefId for reference type determination)
+            $fileData += @{ ASTData = $astData; File = $file; FileRefId = $fileRefId }
         }
         catch {
             $failedFiles++
@@ -488,7 +563,9 @@ function Import-ASTOutput {
             Import-TestStepsFromAST `
                 -ASTData $data.ASTData `
                 -TestFunctionIds $globalTestFunctionIds `
-                -TemplateFunctionIds $globalTemplateFunctionIds
+                -TemplateFunctionIds $globalTemplateFunctionIds `
+                -FileRefId $data.FileRefId `
+                -TemplateFunctionFileRefs $globalTemplateFunctionFileRefs
 
             # Import template calls
             Import-TemplateCallsFromAST `
@@ -514,9 +591,9 @@ function Import-ASTOutput {
     # Show Pass 2 completion
     Show-InlineProgress -Current $totalFileData -Total $totalFileData -Activity "  Importing References" -Completed
 
-    # Pass 3: Generate TemplateReferences and IndirectConfigReferences from TestSteps
-    # This populates the legacy tables needed for blast radius analysis
-    Build-LegacyReferenceTablesFromTestSteps
+    # Pass 3: Build IndirectConfigReferences from TestSteps for blast radius analysis
+    # Converts TestSteps into TemplateReferences and IndirectConfigReferences tables
+    Build-IndirectConfigReferences
 
     $successCount = $processedFiles - $failedFiles
     Show-PhaseMessageMultiHighlight -Message "Replicode Import Complete: $successCount/$totalFiles Files Processed Successfully" -Highlights @(
@@ -665,7 +742,15 @@ function Import-DirectResourceReferencesFromAST {
         $resourceId = Get-OrCreateResourceId -ResourceName $directRef.resource_name
 
         # Determine reference type ID
-        $referenceTypeId = if ($directRef.reference_type -eq "RESOURCE_BLOCK") { 5 } else { 4 }  # 5=RESOURCE_BLOCK, 4=ATTRIBUTE_REFERENCE
+        # 5 = RESOURCE_REFERENCE (resource blocks)
+        # 6 = DATA_SOURCE_REFERENCE (data source blocks)
+        # 4 = ATTRIBUTE_REFERENCE (attribute references)
+        $referenceTypeId = switch ($directRef.reference_type) {
+            "RESOURCE_BLOCK"     { 5 }
+            "DATA_SOURCE_BLOCK"  { 6 }
+            "ATTRIBUTE_REFERENCE" { 4 }
+            default              { 5 }  # Default to RESOURCE_BLOCK for backward compatibility
+        }
 
         # Add direct resource reference record
         [void](Add-DirectResourceReferenceRecord `

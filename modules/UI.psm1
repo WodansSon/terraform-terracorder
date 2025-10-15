@@ -29,15 +29,18 @@ function Get-VSCodeSyntaxColors {
     #>
     return @{
         # Core syntax colors
-        Keyword         = "#569CD6"  # Blue - Keywords (resource, data, var, func, if, else, for, while, return)
-        Type            = "#4EC9B0"  # Teal - Types, struct names, interface names
-        String          = "#CE9178"  # Salmon - String literals, regex groups
-        Number          = "#B5CEA8"  # Light green - Numeric literals
-        Comment         = "#6A9955"  # Green - Comments
-        Function        = "#DCDCAA"  # Gold - Function names, methods, custom literals
-        Variable        = "#9CDCFE"  # Light blue - Variables, parameters, properties, format specifiers
-        Constant        = "#4FC1FF"  # Bright blue - Constants, enum members
-        ControlFlow     = "#C586C0"  # Purple - Control flow keywords, new operator
+        Keyword           = "#569CD6"  # Blue - Keywords (resource, data, var, func, if, else, for, while, return)
+        Type              = "#4EC9B0"  # Teal - Types, struct names, interface names
+        String            = "#CE9178"  # Salmon - String literals, regex groups
+        Number            = "#B5CEA8"  # Light green - Numeric literals
+        Comment           = "#6A9955"  # Green - Comments
+        FunctionHighlight = "#DCDCAA"  # Gold - Function names, methods, custom literals
+        Function          = "#CCB176"  # Dark Gold - Function names, methods, custom literals
+        VariableHighlight = "#9CDCFE"  # Light blue - Variables, parameters, properties, format specifiers
+        Variable          = "#277378"  # Dark Cyan - Variables, parameters, properties, format specifiers
+        VariableBracket   = "#1F1FA8"  # Dark blue - Variable interpolation brackets (${...})
+        Constant          = "#4FC1FF"  # Bright blue - Constants, enum members
+        ControlFlow       = "#C586C0"  # Purple - Control flow keywords, new operator
 
         # Special highlighting
         Highlight       = "#9CDCFE"  # Light blue - Emphasized elements (resource names, tree structure, keys)
@@ -453,8 +456,6 @@ function Show-InlineProgress {
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Green",
         [Parameter(Mandatory = $false)]
-        [string]$ItemColor = "Cyan",
-        [Parameter(Mandatory = $false)]
         [string]$BaseColor = "Gray",
         [Parameter(Mandatory = $false)]
         [string]$InfoColor = "Cyan"
@@ -498,12 +499,8 @@ function Show-RunTestsByService {
     .DESCRIPTION
         Displays go test commands for each service, organized by service name with all
         test prefixes for that service joined with pipe separators.
-    .PARAMETER ServiceGroups
-        Array of service group objects containing Name and test data
     .PARAMETER CommandsResult
         Result object from Show-GoTestCommands containing ConsoleData with test prefixes
-    .PARAMETER NumberColor
-        Color for numbers in output messages
     .PARAMETER ItemColor
         Color for item types in output messages
     .PARAMETER BaseColor
@@ -511,13 +508,7 @@ function Show-RunTestsByService {
     #>
     param(
         [Parameter(Mandatory = $true)]
-        [array]$ServiceGroups,
-
-        [Parameter(Mandatory = $true)]
         [hashtable]$CommandsResult,
-
-        [Parameter(Mandatory = $false)]
-        [string]$NumberColor = "Green",
 
         [Parameter(Mandatory = $false)]
         [string]$ItemColor = "Cyan",

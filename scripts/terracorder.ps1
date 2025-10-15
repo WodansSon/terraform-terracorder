@@ -120,7 +120,6 @@ $VerbosePreference = 'SilentlyContinue'
 Import-Module (Join-Path $ModulesPath "UI.psm1") -Force                          # Base UI functions (no dependencies)
 Import-Module (Join-Path $ModulesPath "Database.psm1") -Force                    # Database functions (uses UI)
 Import-Module (Join-Path $ModulesPath "ASTImport.psm1") -Force                   # AST-based import (Phase 1 integration)
-Import-Module (Join-Path $ModulesPath "RelationalQueries.psm1") -Force           # Relational queries (uses Database)
 Import-Module (Join-Path $ModulesPath "FileDiscovery.psm1") -Force               # File discovery functions
 Import-Module (Join-Path $ModulesPath "DatabaseMode.psm1") -Force                # Database-only mode query functions
 #endregion
@@ -214,7 +213,7 @@ try {
         #region Database and Pattern Initialization
         # Initialize database first
         Show-PhaseHeaderGeneric -Title "Database Initialization" -Description "Terra-Corder"
-        Initialize-TerraDatabase -ExportDirectory $ExportDirectoryAbsolute -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -ElapsedColor $Script:ElapsedColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Initialize-TerraDatabase -ExportDirectory $ExportDirectoryAbsolute -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         # Get reference to the ReferenceTypes from Database module after initialization and set as global
         $Global:ReferenceTypes = & (Get-Module Database) { $script:ReferenceTypes }
@@ -284,7 +283,7 @@ try {
                     ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
                     # Import only the NEW files (deduplicated)
-                    Import-ASTOutput -ASTAnalyzerPath $astAnalyzerPath -TestFiles $newFilePaths -RepoRoot $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                    Import-ASTOutput -ASTAnalyzerPath $replicodePath -TestFiles $newFilePaths -RepoRoot $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
                 } else {
                     Show-PhaseMessageMultiHighlight -Message "All Sequential Test Files Were Already Processed" -Highlights @(
                         @{ Text = "All"; Color = "Yellow" }
@@ -301,32 +300,36 @@ try {
 
         # Show database statistics
         $stats = Get-DatabaseStats
+        $resourceRegCount = $stats.ResourceRegistrations
         $serviceCount = $stats.Services
         $fileCount = $stats.Files
         $structCount = $stats.Structs
         $testFuncCount = $stats.TestFunctions
         $templateFuncCount = $stats.TemplateFunctions
         $testStepCount = $stats.TestFunctionSteps
-        $templateCallCount = 0  # TemplateCallChain not in stats yet
         $directRefCount = $stats.DirectResourceReferences
+        $templateCallCount = $stats.TemplateCallChain
 
         # Display formatted summary block
         Show-PhaseMessageMultiHighlight -Message "Replicode Analysis Summary:" -Highlights @(
             @{ Text = "Replicode"; Color = $Script:ItemColor }
         ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        Show-PhaseMessageMultiHighlight -Message "  Structure:  $serviceCount Services, $fileCount Files, $structCount Structs" -Highlights @(
+        Show-PhaseMessageMultiHighlight -Message "  Registry  : $resourceRegCount Resource-to-Service Mappings" -Highlights @(
+            @{ Text = "$resourceRegCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  Structure : $serviceCount Services, $fileCount Files, $structCount Structs" -Highlights @(
             @{ Text = "$serviceCount"; Color = $Script:NumberColor }
             @{ Text = "$fileCount"; Color = $Script:NumberColor }
             @{ Text = "$structCount"; Color = $Script:NumberColor }
         ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        Show-PhaseMessageMultiHighlight -Message "  Functions:  $testFuncCount Tests, $templateFuncCount Configuration" -Highlights @(
+        Show-PhaseMessageMultiHighlight -Message "  Functions : $testFuncCount Tests, $templateFuncCount Configuration" -Highlights @(
             @{ Text = "$testFuncCount"; Color = $Script:NumberColor }
             @{ Text = "$templateFuncCount"; Color = $Script:NumberColor }
         ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        Show-PhaseMessageMultiHighlight -Message "  References: $testStepCount Steps, $templateCallCount Calls, $directRefCount Direct" -Highlights @(
+        Show-PhaseMessageMultiHighlight -Message "  References: $testStepCount Steps, $directRefCount Direct, $templateCallCount Calls" -Highlights @(
             @{ Text = "$testStepCount"; Color = $Script:NumberColor }
-            @{ Text = "$templateCallCount"; Color = $Script:NumberColor }
             @{ Text = "$directRefCount"; Color = $Script:NumberColor }
+            @{ Text = "$templateCallCount"; Color = $Script:NumberColor }
         ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         $phase2Duration = (Get-Date) - $phase2Start
@@ -338,7 +341,7 @@ try {
         Show-PhaseHeader -PhaseNumber 3 -PhaseDescription "Exporting Database to CSV"
         $phase3Start = Get-Date
 
-        Export-DatabaseToCSV -ItemColor $Script:ItemColor -NumberColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Export-DatabaseToCSV -NumberColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         $phase3Duration = (Get-Date) - $phase3Start
         Show-PhaseCompletion -PhaseNumber 3 -DurationMs ([math]::Round($phase3Duration.TotalMilliseconds, 0))
@@ -351,7 +354,6 @@ try {
         # Get all services that have test files in the database
         $allServices = Get-Services
         $allFiles = Get-Files
-        $allTestFunctions = Get-TestFunctions
 
         # Group files by service to create service groups
         $serviceGroups = @()
@@ -370,14 +372,16 @@ try {
 
         if ($serviceGroups.Count -gt 0) {
             $commandsResult = Show-GoTestCommands -ServiceGroups $serviceGroups -ExportDirectory $ExportDirectoryAbsolute -WriteToFile
-            Show-PhaseMessageHighlight -Message "Generated Test Commands For $($serviceGroups.Count) Services" -HighlightText "$($serviceGroups.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            # Report actual count of services with test commands, not all services with files
+            $actualServiceCount = $commandsResult.ConsoleData.Count
+            Show-PhaseMessageHighlight -Message "Generated Test Commands For $actualServiceCount Services" -HighlightText "$actualServiceCount" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
             Show-PhaseMessageHighlight -Message "Exported: go_test_commands.txt" -HighlightText "go_test_commands.txt" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
             $phase4Duration = (Get-Date) - $phase4Start
             Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round($phase4Duration.TotalMilliseconds, 0))
 
             # Display test commands to console
-            Show-RunTestsByService -ServiceGroups $serviceGroups -CommandsResult $commandsResult -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor
+            Show-RunTestsByService -CommandsResult $commandsResult -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor
         } else {
             Show-PhaseMessageHighlight -Message "No Services Found To Generate Test Commands" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
@@ -407,7 +411,7 @@ try {
         # Execute requested query operations
         if ($ShowStatisticsOnly) {
             # Default behavior: Show database statistics and available options
-            Show-DatabaseStatistics -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-DatabaseStatistics -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
         } else {
             # Show individual reference types if requested
             if ($ShowDirectReferences) {

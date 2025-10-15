@@ -52,9 +52,6 @@ function Show-DatabaseStatistics {
     .SYNOPSIS
     Display available analysis options for the database
 
-    .PARAMETER NumberColor
-    Color for numbers in output
-
     .PARAMETER ItemColor
     Color for item types in output
 
@@ -65,9 +62,6 @@ function Show-DatabaseStatistics {
     Color for info prefix in output
     #>
     param(
-        [Parameter(Mandatory = $false)]
-        [string]$NumberColor = "Yellow",
-
         [Parameter(Mandatory = $false)]
         [string]$ItemColor = "Cyan",
 
@@ -345,9 +339,6 @@ function Show-TemplateFunctionDependencies {
     .PARAMETER TemplateRefs
     Array of template reference info objects
 
-    .PARAMETER FilePath
-    The file path being processed
-
     .PARAMETER NumberColor
     Color for numbers in output
 
@@ -357,9 +348,6 @@ function Show-TemplateFunctionDependencies {
     param(
         [Parameter(Mandatory = $true)]
         [array]$TemplateRefs,
-
-        [Parameter(Mandatory = $true)]
-        [string]$FilePath,
 
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Yellow",
@@ -379,13 +367,6 @@ function Show-TemplateFunctionDependencies {
 
     # Get VS Code color scheme for function highlighting
     $colors = Get-VSCodeSyntaxColors
-
-    # Get executing service name from the file path (e.g., internal/services/recoveryservices/...)
-    $executingServiceName = "unknown"
-    $match = $script:CompiledRegex.ServicePath.Match($FilePath)
-    if ($match.Success) {
-        $executingServiceName = $match.Groups[1].Value
-    }
 
     # Group by test function to consolidate steps
     $functionGroups = @{}
@@ -430,14 +411,7 @@ function Show-TemplateFunctionDependencies {
         Write-HostRGB "     Function: " $colors.Highlight -NoNewline
         Write-HostRGB "$($funcGroup.TestFunc.Line)" $colors.LineNumber -NoNewline
         Write-HostRGB ": " $colors.Highlight -NoNewline
-        Write-HostRGB "$($funcGroup.TestFunc.FunctionName)" $colors.Function
-
-        # Show service context - only for cross-service references
-        if ($executingServiceName -ne $funcGroup.ResourceOwningServiceName) {
-            # Cross-service - show which service this test belongs to
-            Write-HostRGB "               Service: " $colors.Highlight -NoNewline
-            Write-HostRGB "$executingServiceName" $colors.Type
-        }
+        Write-HostRGB "$($funcGroup.TestFunc.FunctionName)" $colors.FunctionHighlight
 
         # Display steps (sorted by step index)
         $sortedSteps = $funcGroup.Steps | Sort-Object { $_.TestFuncStep.StepIndex }
@@ -450,336 +424,142 @@ function Show-TemplateFunctionDependencies {
             Write-HostRGB ": " $colors.Highlight -NoNewline
             Write-HostRGB "Config" $colors.Highlight -NoNewline
             Write-HostRGB ": " $colors.Label -NoNewline
-            Write-HostRGB "$($stepInfo.TemplateRef.TemplateVariable)" $colors.Variable -NoNewline
+            Write-HostRGB "$($stepInfo.TemplateRef.TemplateVariable)" $colors.Highlight -NoNewline
             Write-HostRGB "." $colors.Label -NoNewline
-            Write-HostRGB "$($stepInfo.TemplateRef.TemplateMethod)" $colors.Function
-        }
-    }
-}
+            Write-HostRGB "$($stepInfo.TemplateRef.TemplateMethod)" $colors.FunctionHighlight -NoNewline
 
-function Show-SequentialCallChain {
-    <#
-    .SYNOPSIS
-    Display test configuration function dependencies (template references)
+            # Show reference type details with proper formatting
+            if ($stepInfo.RefTypeName) {
+                # Parse the RefTypeName (e.g., "CROSS_FILE;SAME_SERVICE" or "SELF_CONTAINED")
+                $refTypes = $stepInfo.RefTypeName -split ';'
+                $fileRefType = $refTypes[0]
+                $serviceRefType = if ($refTypes.Count -gt 1) { $refTypes[1] } else { $null }
 
-    .PARAMETER TemplateRefs
-    Array of template reference info objects
+                # Get reference type names from database for comparison
+                $REF_NAME_CROSS_FILE = Get-ReferenceTypeName -ReferenceTypeId $REF_ID_CROSS_FILE
+                $REF_NAME_EXTERNAL_REFERENCE = Get-ReferenceTypeName -ReferenceTypeId $REF_ID_EXTERNAL_REFERENCE
+                $REF_NAME_SELF_CONTAINED = Get-ReferenceTypeName -ReferenceTypeId $REF_ID_SELF_CONTAINED
+                $REF_NAME_EMBEDDED_SELF = Get-ReferenceTypeName -ReferenceTypeId $REF_ID_EMBEDDED_SELF
+                $REF_NAME_CROSS_SERVICE = Get-ReferenceTypeName -ReferenceTypeId $REF_ID_CROSS_SERVICE
 
-    .PARAMETER FilePath
-    The file path being processed
+                # For CROSS_FILE, show the call chain with arrow
+                # If same struct: r.method1 -> r.method2: CROSS_FILE
+                # If different struct: r.method1 -> OtherStruct{}.method2: CROSS_FILE
+                # For EXTERNAL_REFERENCE, show: r.method -> <external>: EXTERNAL_REFERENCE
+                # For SELF_CONTAINED, just show type since receiver IS the template: r.basic: SELF_CONTAINED
+                if ($fileRefType -eq $REF_NAME_CROSS_FILE -and $stepInfo.TargetTemplateInfo) {
+                    # Target info was pre-joined from database
+                    $targetStruct = $stepInfo.TargetTemplateInfo.Struct
+                    $targetFunc = $stepInfo.TargetTemplateInfo.TemplateFunction
 
-    .PARAMETER NumberColor
-    Color for numbers in output
-
-    .PARAMETER ItemColor
-    Color for item types in output
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [array]$TemplateRefs,
-
-        [Parameter(Mandatory = $true)]
-        [string]$FilePath,
-
-        [Parameter(Mandatory = $false)]
-        [string]$NumberColor = "Yellow",
-
-        [Parameter(Mandatory = $false)]
-        [string]$ItemColor = "Cyan"
-    )
-
-    if ($TemplateRefs.Count -eq 0) {
-        return
-    }
-
-    Write-Host ""
-    Write-Separator -Indent 3
-    Write-Host "     Test Configuration Function Dependencies:" -ForegroundColor $ItemColor
-    Write-Separator -Indent 3
-
-    # Get VS Code color scheme for function highlighting
-    $colors = Get-VSCodeSyntaxColors
-
-    # Get executing service name from the file path (e.g., internal/services/recoveryservices/...)
-    $executingServiceName = "unknown"
-    $match = $script:CompiledRegex.ServicePath.Match($FilePath)
-    if ($match.Success) {
-        $executingServiceName = $match.Groups[1].Value
-    }
-
-    # Group by test function to consolidate steps
-    $functionGroups = @{}
-    foreach ($refInfo in $TemplateRefs) {
-        $funcId = $refInfo.TestFunc.TestFunctionRefId
-        if (-not $functionGroups.ContainsKey($funcId)) {
-            $functionGroups[$funcId] = @{
-                TestFunc = $refInfo.TestFunc
-                Steps = @()
-                ServiceImpactTypeName = $refInfo.ServiceImpactTypeName
-                ResourceOwningServiceName = $refInfo.ResourceOwningServiceName
-                SourceTemplateFunction = $refInfo.SourceTemplateFunction
-            }
-        }
-        $functionGroups[$funcId].Steps += $refInfo
-    }
-
-    # Sort by test function line number
-    $sortedFunctions = $functionGroups.Values | Sort-Object { $_.TestFunc.Line }
-    $currentFunctionIndex = 0
-
-    foreach ($funcGroup in $sortedFunctions) {
-        $currentFunctionIndex++
-
-        # Add blank line between functions (not before first)
-        if ($currentFunctionIndex -gt 1) {
-            Write-Host ""
-        }
-
-        # Function name
-        Write-HostRGB "     Function: " $colors.Highlight -NoNewline
-        Write-HostRGB "$($funcGroup.TestFunc.Line)" $colors.LineNumber -NoNewline
-        Write-HostRGB ": " $colors.Highlight -NoNewline
-        Write-HostRGB "$($funcGroup.TestFunc.FunctionName)" $colors.Function
-
-        # Show service context - only for cross-service references
-        if ($executingServiceName -ne $funcGroup.ResourceOwningServiceName) {
-            # Cross-service - show which service this test belongs to
-            Write-HostRGB "               Service: " $colors.Highlight -NoNewline
-            Write-HostRGB "$executingServiceName" $colors.Type
-        }
-
-        # Display steps (sorted by step index)
-        $sortedSteps = $funcGroup.Steps | Sort-Object { $_.TestFuncStep.StepIndex }
-        # Calculate max step index width for alignment
-        $maxStepWidth = ($sortedSteps | ForEach-Object { $_.TestFuncStep.StepIndex.ToString().Length } | Measure-Object -Maximum).Maximum
-        foreach ($stepInfo in $sortedSteps) {
-            $stepNumStr = $stepInfo.TestFuncStep.StepIndex.ToString().PadLeft($maxStepWidth)
-            Write-HostRGB "               Step " $colors.Highlight -NoNewline
-            Write-Host "$stepNumStr" -ForegroundColor $NumberColor -NoNewline
-            Write-HostRGB ": " $colors.Highlight -NoNewline
-            Write-HostRGB "Config" $colors.Highlight -NoNewline
-            Write-HostRGB ": " $colors.Label -NoNewline
-            Write-HostRGB "$($stepInfo.TemplateRef.TemplateVariable)" $colors.Variable -NoNewline
-            Write-HostRGB "." $colors.Label -NoNewline
-            Write-HostRGB "$($stepInfo.TemplateRef.TemplateMethod)" $colors.Function
-
-            # For cross-service references, show complete dependency chain for each step
-            # Get the template function for THIS SPECIFIC STEP (not the function group's source)
-            $stepTemplateFunction = $null
-            $templateServiceName = $null
-
-            if ($stepInfo.TestFuncStep.StructRefId) {
-                # Look up the template function for this step's struct
-                if (-not $script:allTemplateFunctions) {
-                    $script:allTemplateFunctions = Get-TemplateFunctions
-                }
-
-                $stepTemplateFunction = $script:allTemplateFunctions | Where-Object {
-                    $_.StructRefId -eq $stepInfo.TestFuncStep.StructRefId
-                } | Select-Object -First 1
-
-                # Get the service name for the template function's file
-                if ($stepTemplateFunction) {
-                    if (-not $script:allFiles) {
-                        $script:allFiles = Get-Files
-                    }
-                    if (-not $script:allServices) {
-                        $script:allServices = Get-Services
+                    # Check if source and target are from the same struct
+                    $sameStruct = $false
+                    if ($stepInfo.SourceTemplateFunction -and $stepInfo.SourceTemplateFunction.StructRefId -eq $targetStruct.StructRefId) {
+                        $sameStruct = $true
                     }
 
-                    $templateFile = $script:allFiles | Where-Object { $_.FileRefId -eq $stepTemplateFunction.FileRefId } | Select-Object -First 1
-                    if ($templateFile) {
-                        $templateService = $script:allServices | Where-Object { $_.ServiceRefId -eq $templateFile.ServiceRefId } | Select-Object -First 1
-                        if ($templateService) {
-                            $templateServiceName = $templateService.Name
-                        }
+                    Write-Host " " -NoNewline
+                    Write-HostRGB "->" $colors.Label -NoNewline
+                    Write-Host " " -NoNewline
+
+                    if ($sameStruct) {
+                        # Same struct: use the receiver variable (e.g., r.template)
+                        Write-HostRGB "$($stepInfo.TemplateRef.TemplateVariable)" $colors.Highlight -NoNewline
+                        Write-HostRGB "." $colors.Label -NoNewline
+                        Write-HostRGB "$($targetFunc.TemplateFunctionName)" $colors.FunctionHighlight -NoNewline
+                    } else {
+                        # Different struct: show full notation (e.g., OtherStruct{}.method)
+                        Write-HostRGB "$($targetStruct.StructName)" $colors.Variable -NoNewline
+                        Write-HostRGB "{}" $colors.VariableBracket -NoNewline
+                        Write-HostRGB "." $colors.Label -NoNewline
+                        Write-HostRGB "$($targetFunc.TemplateFunctionName)" $colors.FunctionHighlight -NoNewline
                     }
-                }
-            }
 
-            # Only show cross-service data if the template function is in a DIFFERENT service than the test
-            if ($stepTemplateFunction -and $templateServiceName -and $executingServiceName -ne $templateServiceName) {
+                    # Show service boundary if cross-service (before the reference type)
+                    # Show WHERE the cross-service boundary is crossed: template's service -> resource's service
+                    if ($serviceRefType -eq $REF_NAME_CROSS_SERVICE) {
+                        Write-Host " " -NoNewline
+                        Write-HostRGB "(" $colors.Label -NoNewline
 
-                # Get direct resource references from the template function file
-                if (-not $script:allDirectResourceReferences) {
-                    $script:allDirectResourceReferences = Get-DirectResourceReferences
-                }
-
-                # Load Resources, Structs, and TemplateFunctions tables if needed
-                if (-not $script:allResources) {
-                    $script:allResources = Get-Resources
-                }
-                if (-not $script:allStructs) {
-                    $script:allStructs = Get-Structs
-                }
-                if (-not $script:allTemplateFunctions) {
-                    $script:allTemplateFunctions = Get-TemplateFunctions
-                }
-                if (-not $script:allFiles) {
-                    $script:allFiles = Get-Files
-                }
-                if (-not $script:allServices) {
-                    $script:allServices = Get-Services
-                }
-
-                # Build hashtable indexes for O(1) lookups (only once per function call)
-                if (-not $script:structsByRefId) {
-                    $script:structsByRefId = @{}
-                    foreach ($struct in $script:allStructs) {
-                        $script:structsByRefId[$struct.StructRefId] = $struct
-                    }
-                }
-                if (-not $script:filesByRefId) {
-                    $script:filesByRefId = @{}
-                    foreach ($file in $script:allFiles) {
-                        $script:filesByRefId[$file.FileRefId] = $file
-                    }
-                }
-                if (-not $script:servicesByRefId) {
-                    $script:servicesByRefId = @{}
-                    foreach ($service in $script:allServices) {
-                        $script:servicesByRefId[$service.ServiceRefId] = $service
-                    }
-                }
-                if (-not $script:templateFunctionsByStructRefId) {
-                    $script:templateFunctionsByStructRefId = @{}
-                    foreach ($func in $script:allTemplateFunctions) {
-                        if (-not $script:templateFunctionsByStructRefId.ContainsKey($func.StructRefId)) {
-                            $script:templateFunctionsByStructRefId[$func.StructRefId] = @()
-                        }
-                        $script:templateFunctionsByStructRefId[$func.StructRefId] += $func
-                    }
-                }
-                if (-not $script:structsByResourceRefId) {
-                    $script:structsByResourceRefId = @{}
-                    foreach ($struct in $script:allStructs) {
-                        if (-not $script:structsByResourceRefId.ContainsKey($struct.ResourceRefId)) {
-                            $script:structsByResourceRefId[$struct.ResourceRefId] = @()
-                        }
-                        $script:structsByResourceRefId[$struct.ResourceRefId] += $struct
-                    }
-                }
-                if (-not $script:resourcesByName) {
-                    $script:resourcesByName = @{}
-                    foreach ($resource in $script:allResources) {
-                        $script:resourcesByName[$resource.ResourceName] = $resource
-                    }
-                }
-
-                # Get the struct that owns the source template function (the template being called)
-                # Use hashtable lookup instead of Where-Object for O(1) performance
-                $calledTemplateStruct = $script:structsByRefId[$stepTemplateFunction.StructRefId]
-
-                # Define box-drawing characters (matching sequential test style)
-                $tee = [char]0x251C       # (branch continues)
-                $corner = [char]0x2514    # (last branch)
-                $arrow = [char]0x2500     # (horizontal line)
-                $rarrow = [char]0x25BA    # (right-pointing arrow)
-
-                # Second level: Get resource references to determine how many items we'll display
-                # IMPORTANT: Only show functions that reference the specific resource we're analyzing
-                $sourceFileRefId = $stepTemplateFunction.FileRefId
-                $directRefs = $script:allDirectResourceReferences | Where-Object {
-                    $_.FileRefId -eq $sourceFileRefId
-                } | Select-Object -First 10  # Get more for complete picture
-
-                # Get the specific resource we're analyzing (via Struct -> ResourceRefId)
-                $targetResourceRefId = $null
-                if ($stepTemplateFunction) {
-                    # Use hashtable lookup for O(1) performance
-                    $sourceStruct = $script:structsByRefId[$stepTemplateFunction.StructRefId]
-
-                    if ($sourceStruct) {
-                        $targetResourceRefId = $sourceStruct.ResourceRefId
-                    }
-                }
-
-                # Map structs to their template functions (FILTERED by target resource only)
-                # OPTIMIZED: Build struct info once for the target resource using hashtable lookups
-                $structToFunctions = @{}
-
-                if ($targetResourceRefId) {
-                    # Get all structs for the target resource using O(1) hashtable lookup
-                    $structs = $script:structsByResourceRefId[$targetResourceRefId]
-
-                    if ($structs) {
-                        # Process each struct once (no nested loops)
-                        foreach ($struct in $structs) {
-                            # Get template function for this struct - O(1) lookup
-                            $templateFuncs = $script:templateFunctionsByStructRefId[$struct.StructRefId]
-                            $templateFunc = if ($templateFuncs) { $templateFuncs[0] } else { $null }
-
-                            if ($templateFunc) {
-                                # Get file and service info - O(1) lookups
-                                $file = $script:filesByRefId[$templateFunc.FileRefId]
-                                $serviceName = ""
-                                if ($file) {
-                                    $service = $script:servicesByRefId[$file.ServiceRefId]
-                                    if ($service) {
-                                        $serviceName = $service.Name
-                                    }
-                                }
-
-                                $structToFunctions[$struct.StructName] = @{
-                                    FunctionName = $templateFunc.TemplateFunctionName
-                                    Line = $templateFunc.Line
-                                    TemplateFunctionRefId = $templateFunc.TemplateFunctionRefId
-                                    ServiceName = $serviceName
+                        # Get the template's service (from the target template function's file)
+                        $templateServiceName = $null
+                        if ($stepInfo.TargetTemplateInfo -and $stepInfo.TargetTemplateInfo.TemplateFunction -and $stepInfo.TargetTemplateInfo.TemplateFunction.FileRefId) {
+                            $templateFileRefId = [int]$stepInfo.TargetTemplateInfo.TemplateFunction.FileRefId
+                            $templateFile = Get-FileRecordByRefId -FileRefId $templateFileRefId
+                            if ($templateFile -and $templateFile.ServiceRefId) {
+                                $templateServiceId = [int]$templateFile.ServiceRefId
+                                $allServices = Get-Services
+                                $templateService = $allServices | Where-Object { $_.ServiceRefId -eq $templateServiceId } | Select-Object -First 1
+                                if ($templateService) {
+                                    $templateServiceName = $templateService.Name
                                 }
                             }
                         }
+
+                        if ($templateServiceName) {
+                            Write-Host "$templateServiceName" -ForegroundColor Cyan -NoNewline
+                            Write-Host " " -NoNewline
+                            Write-HostRGB "->" $colors.Label -NoNewline
+                            Write-Host " " -NoNewline
+                        }
+                        if ($stepInfo.ResourceOwningServiceName) {
+                            Write-Host "$($stepInfo.ResourceOwningServiceName)" -ForegroundColor Cyan -NoNewline
+                        }
+                        Write-HostRGB ")" $colors.Label -NoNewline
+                    }
+
+                    Write-HostRGB ":" $colors.Label -NoNewline
+                    Write-Host " " -NoNewline
+                    Write-Host "$fileRefType" -ForegroundColor Yellow -NoNewline
+
+                    # Show service impact type if cross-service (append with semicolon)
+                    if ($serviceRefType -eq $REF_NAME_CROSS_SERVICE) {
+                        Write-HostRGB ";" $colors.Label -NoNewline
+                        Write-Host " " -NoNewline
+                        Write-Host "$serviceRefType" -ForegroundColor Magenta -NoNewline
                     }
                 }
+                # For EXTERNAL_REFERENCE, show that it calls something unknown/external
+                # We don't know if the external call itself crosses services (we don't have that code)
+                # But we still want to show if the test→resource relationship is cross-service
+                elseif ($fileRefType -eq $REF_NAME_EXTERNAL_REFERENCE) {
+                    Write-Host " " -NoNewline
+                    Write-HostRGB "->" $colors.Label -NoNewline
+                    Write-Host " " -NoNewline
+                    Write-Host "<external>" -ForegroundColor DarkGray -NoNewline
+                    Write-HostRGB ":" $colors.Label -NoNewline
+                    Write-Host " " -NoNewline
+                    Write-Host "$fileRefType" -ForegroundColor Magenta -NoNewline
 
-                # Determine if we need to show Level 2 (resource references)
-                $hasLevel2 = $structToFunctions.Count -gt 0
-
-                # First level: Show the template function being called (Level 1)
-                # Use tee-down (┬) if there are Level 2 items, otherwise use corner (└)
-                $level1Char = if ($hasLevel2) { [char]0x252C } else { $corner }  # ┬ or └
-
-                Write-HostRGB "                 $corner$level1Char$arrow$rarrow " $colors.Highlight -NoNewline
-                Write-HostRGB "Caller: " $colors.BracketLevel1 -NoNewline
-                Write-HostRGB "$($stepTemplateFunction.Line)" $colors.LineNumber -NoNewline
-                Write-HostRGB ": " $colors.Label -NoNewline
-                Write-HostRGB "$($stepTemplateFunction.TemplateFunctionName)" $colors.Function
-
-                # Display the functions that actually use the resource (Level 2 - indented)
-                if ($hasLevel2) {
-                    $structNames = $structToFunctions.Keys | Sort-Object | Select-Object -First 5
-                    $level2Count = $structNames.Count
-                    $level2Index = 0
-
-                    foreach ($structName in $structNames) {
-                        $level2Index++
-                        $isLastLevel2 = ($level2Index -eq $level2Count)
-                        $level2BranchChar = if ($isLastLevel2) { $corner } else { $tee }
-
-                        $funcInfo = $structToFunctions[$structName]
-
-                        # Indent Level 2 under Level 1 - align with the vertical line from └┬►
-                        Write-HostRGB "                  $level2BranchChar$arrow$rarrow " $colors.Highlight -NoNewline
-                        Write-HostRGB "References" $colors.Highlight -NoNewline
-                        Write-HostRGB ": " $colors.Label -NoNewline
-
-                        # Show service name if available (and not empty)
-                        if ($funcInfo.ServiceName -and $funcInfo.ServiceName -ne "") {
-                            Write-HostRGB "$($funcInfo.ServiceName)" $colors.ControlFlow -NoNewline
-                            Write-HostRGB ":" $colors.Label -NoNewline
-                        }
-
-                        Write-HostRGB "$structName" $colors.Type -NoNewline
-                        Write-HostRGB ": " $colors.Label -NoNewline
-                        Write-HostRGB "$($funcInfo.Line)" $colors.LineNumber -NoNewline
-                        Write-HostRGB ": " $colors.Label -NoNewline
-                        Write-HostRGB "$($funcInfo.FunctionName)" $colors.Function
+                    # Show service impact type if cross-service (test service != resource service)
+                    # This indicates the test impacts a resource in a different service, not that the external call crosses services
+                    if ($serviceRefType -eq $REF_NAME_CROSS_SERVICE) {
+                        Write-HostRGB ";" $colors.Label -NoNewline
+                        Write-Host " " -NoNewline
+                        Write-Host "$serviceRefType" -ForegroundColor Magenta -NoNewline
                     }
+                }
+                # For SELF_CONTAINED/EMBEDDED_SELF, just show the type (receiver IS the template)
+                else {
+                    Write-Host " " -NoNewline
+                    Write-HostRGB ":" $colors.Label -NoNewline
+                    Write-Host " " -NoNewline
+
+                    $fileRefColor = switch ($fileRefType) {
+                        $REF_NAME_CROSS_FILE { "Yellow" }
+                        $REF_NAME_EXTERNAL_REFERENCE { "Magenta" }
+                        $REF_NAME_SELF_CONTAINED { "Green" }
+                        $REF_NAME_EMBEDDED_SELF { "Green" }
+                        default { "Gray" }
+                    }
+                    Write-Host "$fileRefType" -ForegroundColor $fileRefColor -NoNewline
                 }
             }
+
+            Write-Host ""  # End the line
         }
     }
 }
-
 
 function Show-SequentialCallChain {
     <#
@@ -789,24 +569,12 @@ function Show-SequentialCallChain {
     .PARAMETER SequentialRefs
     Array of sequential reference info objects
 
-    .PARAMETER FilePath
-    The file path being processed
-
-    .PARAMETER NumberColor
-    Color for numbers in output
-
     .PARAMETER ItemColor
     Color for item types in output
     #>
     param(
         [Parameter(Mandatory = $true)]
         [array]$SequentialRefs,
-
-        [Parameter(Mandatory = $true)]
-        [string]$FilePath,
-
-        [Parameter(Mandatory = $false)]
-        [string]$NumberColor = "Yellow",
 
         [Parameter(Mandatory = $false)]
         [string]$ItemColor = "Cyan"
@@ -1036,18 +804,55 @@ function Show-IndirectReferences {
     Write-Separator
     Write-Host ""
 
-    $indirectRefs = Get-IndirectConfigReferences
-    $templateRefs = Get-TemplateReferences
-    $sequentialRefs = Get-SequentialReferences
+    $indirectRefs = @(Get-IndirectConfigReferences)
+    $templateRefs = @(Get-TemplateReferences)
+    $sequentialRefs = @(Get-SequentialReferences)
 
     if ($indirectRefs.Count -eq 0 -and $templateRefs.Count -eq 0 -and $sequentialRefs.Count -eq 0) {
         Show-PhaseMessageHighlight -Message "No Indirect References Found In Database" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $BaseColor -InfoColor $InfoColor
         return
     }
 
-    # Service Impact Analysis (ServiceImpactTypeId is loaded as integer from Database.psm1)
-    $sameServiceRefs = $indirectRefs | Where-Object { $_.ServiceImpactTypeId -eq 14 }
-    $crossServiceRefs = $indirectRefs | Where-Object { $_.ServiceImpactTypeId -eq 15 }
+    # Service Impact Analysis - RECALCULATE at runtime based on resource ownership
+    # The stored ServiceImpactTypeId is based on test-service vs struct-service (AST context)
+    # But we need test-service vs resource-owning-service for true cross-service analysis
+    $resourceOwningServiceId = $null
+    $resources = @(Get-Resources)
+    if ($resources.Count -gt 0) {
+        $targetResource = $resources[0]
+        if ($targetResource -and $targetResource.ResourceRegistrationRefId) {
+            $registration = Get-ResourceRegistrationByName -ResourceName $targetResource.ResourceName
+            if ($registration) {
+                $resourceOwningServiceId = [int]$registration.ServiceRefId
+            }
+        }
+    }
+
+    # Recalculate service impact for each indirect reference
+    $sameServiceRefs = @()
+    $crossServiceRefs = @()
+
+    foreach ($indirectRef in $indirectRefs) {
+        # Get the test function's service
+        $templateRef = $templateRefs | Where-Object { $_.TemplateReferenceRefId -eq $indirectRef.TemplateReferenceRefId } | Select-Object -First 1
+        if ($templateRef) {
+            $testFunc = Get-TestFunctionById -TestFunctionRefId $templateRef.TestFunctionRefId
+            if ($testFunc -and $testFunc.FileRefId) {
+                $fileRefId = [int]$testFunc.FileRefId
+                $testFile = Get-FileRecordByRefId -FileRefId $fileRefId
+                if ($testFile -and $testFile.ServiceRefId) {
+                    $testServiceId = [int]$testFile.ServiceRefId
+
+                    # Compare test service vs resource-owning service
+                    if ($resourceOwningServiceId -and $testServiceId -eq $resourceOwningServiceId) {
+                        $sameServiceRefs += $indirectRef
+                    } elseif ($resourceOwningServiceId) {
+                        $crossServiceRefs += $indirectRef
+                    }
+                }
+            }
+        }
+    }
 
     Write-Host "  Total Impact: " -ForegroundColor $InfoColor -NoNewline
     Write-Host "$($indirectRefs.Count + $sequentialRefs.Count) " -ForegroundColor $NumberColor -NoNewline
@@ -1119,7 +924,34 @@ function Show-IndirectReferences {
         }
     }
 
-    # Build file-based grouping - Join: IndirectConfigReferences → TemplateReferences → TestFunctionSteps → TestFunctions → Files
+    # Pre-build structs lookup for O(1) access
+    $structsLookup = @{}
+    foreach ($struct in Get-Structs) {
+        if (-not $structsLookup.ContainsKey($struct.StructRefId)) {
+            $structsLookup[$struct.StructRefId] = $struct
+        }
+    }
+
+    # Pre-build TemplateCallChain lookup indexed by SourceTemplateFunctionRefId
+    $templateCallChainLookup = @{}
+    foreach ($callChain in Get-TemplateCallChains) {
+        $sourceId = $callChain.SourceTemplateFunctionRefId
+        if (-not $templateCallChainLookup.ContainsKey($sourceId)) {
+            $templateCallChainLookup[$sourceId] = @()
+        }
+        $templateCallChainLookup[$sourceId] += $callChain
+    }
+
+    # Get reference type names from database (avoid hardcoding strings throughout the code)
+    # Use IDs for comparisons (stable database values), convert to names only for display
+    $REF_ID_CROSS_FILE = 2
+    $REF_ID_EMBEDDED_SELF = 3
+    $REF_ID_EXTERNAL_REFERENCE = 10
+    $REF_ID_SELF_CONTAINED = 1
+    $REF_ID_SAME_SERVICE = 14
+    $REF_ID_CROSS_SERVICE = 15
+
+    # Build file-based grouping - Join: IndirectConfigReferences -> TemplateReferences -> TestFunctionSteps -> TestFunctions -> Files
     $fileGroups = @{}
     foreach ($indirectRef in $indirectRefs) {
         # Get TemplateReference
@@ -1134,30 +966,121 @@ function Show-IndirectReferences {
         $testFuncStep = $testFuncStepLookup[$templateRef.TestFunctionStepRefId]
         if (-not $testFuncStep) { continue }
 
-        # Get reference type name from the TestFunctionStep (CROSS_FILE, EMBEDDED_SELF, etc.)
-        $refTypeName = Get-ReferenceTypeName -ReferenceTypeId $testFuncStep.ReferenceTypeId
-
-        # Get service impact type name from the IndirectConfigReference (SAME_SERVICE, CROSS_SERVICE)
-        $serviceImpactTypeName = $null
-        if ($indirectRef.PSObject.Properties['ServiceImpactTypeId'] -and $indirectRef.ServiceImpactTypeId) {
-            $serviceImpactTypeName = Get-ReferenceTypeName -ReferenceTypeId $indirectRef.ServiceImpactTypeId
+        # Get reference type ID from IndirectConfigReference (file location: CROSS_FILE or EMBEDDED_SELF)
+        $fileReferenceTypeId = $null
+        if ($indirectRef.PSObject.Properties['ReferenceTypeId'] -and $indirectRef.ReferenceTypeId) {
+            $fileReferenceTypeId = $indirectRef.ReferenceTypeId
         }
 
-        # Get the source template function using the foreign key (O(1) hashtable lookup)
+        # Get the source template function (the one being called in the test step)
         $sourceTemplateFunction = $null
         if ($indirectRef.SourceTemplateFunctionRefId) {
-            # Direct O(1) lookup using the hashtable - TemplateFunctions are already indexed by RefId
-            if (-not $script:allTemplateFunctions) {
-                $script:allTemplateFunctions = Get-TemplateFunctions
-            }
-            # Convert array to hashtable on first use for O(1) lookups
-            if (-not $script:templateFunctionsById) {
-                $script:templateFunctionsById = @{}
-                foreach ($tf in $script:allTemplateFunctions) {
-                    $script:templateFunctionsById[$tf.TemplateFunctionRefId] = $tf
+            $sourceTemplateFunction = $templateFuncLookup[$indirectRef.SourceTemplateFunctionRefId]
+        }
+
+        # Get target template info for ALL templates (both EMBEDDED_SELF and CROSS_FILE)
+        # This shows what the template is calling (e.g., r.basic calls BackupProtectedFileShareResource.base)
+        $targetTemplateInfo = $null
+        if ($sourceTemplateFunction) {
+            # Get the target struct and function name for display
+            if ($sourceTemplateFunction.StructRefId) {
+                $sourceStruct = $structsLookup[$sourceTemplateFunction.StructRefId]
+                if ($sourceStruct) {
+                    $targetTemplateInfo = @{
+                        TemplateFunction = $sourceTemplateFunction
+                        Struct = $sourceStruct
+                    }
                 }
             }
-            $sourceTemplateFunction = $script:templateFunctionsById[$indirectRef.SourceTemplateFunctionRefId]
+        }
+
+        # CHECK: If the template makes cross-file calls to other templates (e.g., data source -> resource)
+        # Override EMBEDDED_SELF to CROSS_FILE if template calls another template in a different file
+        # AND override the target info to show the cross-file target instead of the source
+        $crossFileCallInfo = $null
+        if ($fileReferenceTypeId -eq $REF_ID_EMBEDDED_SELF -and $indirectRef.SourceTemplateFunctionRefId) {
+            # Use pre-built lookup instead of querying every time
+            $crossFileCallsForSource = $templateCallChainLookup[$indirectRef.SourceTemplateFunctionRefId]
+            if ($crossFileCallsForSource) {
+                $crossFileCall = $crossFileCallsForSource | Where-Object {
+                    $_.ReferenceTypeId -eq $REF_ID_CROSS_FILE -or $_.ReferenceTypeId -eq $REF_ID_EXTERNAL_REFERENCE
+                } | Select-Object -First 1
+
+                if ($crossFileCall) {
+                    # Check if it's an external reference (unresolved target)
+                    if ($crossFileCall.ReferenceTypeId -eq $REF_ID_EXTERNAL_REFERENCE) {
+                        $fileReferenceTypeId = $REF_ID_EXTERNAL_REFERENCE
+                        $crossFileCallInfo = $crossFileCall
+                        # For external references, targetTemplateInfo stays as source (we don't know the target)
+                    } else {
+                        $fileReferenceTypeId = $REF_ID_CROSS_FILE
+                        $crossFileCallInfo = $crossFileCall
+
+                        # Join to get target template function and struct info (OVERRIDE the source info)
+                        if ($crossFileCall.TargetTemplateFunctionRefId) {
+                            $targetTemplateFunc = $templateFuncLookup[$crossFileCall.TargetTemplateFunctionRefId]
+                            if ($targetTemplateFunc -and $targetTemplateFunc.StructRefId) {
+                                $targetStruct = $structsLookup[$targetTemplateFunc.StructRefId]
+                                if ($targetStruct) {
+                                    $targetTemplateInfo = @{
+                                        TemplateFunction = $targetTemplateFunc
+                                        Struct = $targetStruct
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        # RECALCULATE service impact type at runtime based on resource ownership
+        # Compare test function's service vs resource-owning service (not struct service)
+        $serviceImpactTypeId = $null
+        $testServiceName = $null
+        if ($testFunc -and $testFunc.FileRefId) {
+            $fileRefId = [int]$testFunc.FileRefId
+            $testFile = Get-FileRecordByRefId -FileRefId $fileRefId
+            if ($testFile -and $testFile.ServiceRefId -and $resourceOwningServiceId) {
+                $testServiceId = [int]$testFile.ServiceRefId
+
+                # Get the test service name for display
+                $allServices = Get-Services
+                $testService = $allServices | Where-Object { $_.ServiceRefId -eq $testServiceId } | Select-Object -First 1
+                if ($testService) {
+                    $testServiceName = $testService.Name
+                }
+
+                if ($testServiceId -eq $resourceOwningServiceId) {
+                    $serviceImpactTypeId = $REF_ID_SAME_SERVICE
+                } else {
+                    $serviceImpactTypeId = $REF_ID_CROSS_SERVICE
+                }
+            }
+        }
+
+        # Get the resource-owning service name for display
+        $resourceOwningServiceName = $null
+        if ($resourceOwningServiceId) {
+            $allServices = Get-Services
+            $owningService = $allServices | Where-Object { $_.ServiceRefId -eq $resourceOwningServiceId } | Select-Object -First 1
+            if ($owningService) {
+                $resourceOwningServiceName = $owningService.Name
+            }
+        }
+
+        # Convert IDs to names for display: "CROSS_FILE;SAME_SERVICE" or "SELF_CONTAINED"
+        $fileRefTypeName = if ($fileReferenceTypeId) { Get-ReferenceTypeName -ReferenceTypeId $fileReferenceTypeId } else { $null }
+        $serviceImpactTypeName = if ($serviceImpactTypeId) { Get-ReferenceTypeName -ReferenceTypeId $serviceImpactTypeId } else { $null }
+
+        $refTypeName = if ($fileReferenceTypeId -eq $REF_ID_EMBEDDED_SELF) {
+            Get-ReferenceTypeName -ReferenceTypeId $REF_ID_SELF_CONTAINED  # Same file = self-contained
+        } elseif ($fileRefTypeName -and $serviceImpactTypeName) {
+            "$fileRefTypeName;$serviceImpactTypeName"  # e.g., "CROSS_FILE;SAME_SERVICE"
+        } elseif ($fileRefTypeName) {
+            $fileRefTypeName  # Just file reference type if no service info
+        } else {
+            "UNKNOWN"
         }
 
         # Group by file
@@ -1172,8 +1095,11 @@ function Show-IndirectReferences {
             TemplateRef               = $templateRef
             RefTypeName               = $refTypeName
             ServiceImpactTypeName     = $serviceImpactTypeName
+            TestServiceName           = $testServiceName
             ResourceOwningServiceName = $resourceOwningServiceName
             SourceTemplateFunction    = $sourceTemplateFunction
+            CrossFileCallInfo         = $crossFileCallInfo
+            TargetTemplateInfo        = $targetTemplateInfo
         }
     }
 
@@ -1267,12 +1193,12 @@ function Show-IndirectReferences {
         if ($refs.Count -gt 0) {
             # Display template references first (if any)
             if ($templateRefs.Count -gt 0) {
-                Show-TemplateFunctionDependencies -TemplateRefs $templateRefs -FilePath $filePath -NumberColor $NumberColor -ItemColor $ItemColor
+                Show-TemplateFunctionDependencies -TemplateRefs $templateRefs -NumberColor $NumberColor -ItemColor $ItemColor
             }
 
             # Display sequential references (if any)
             if ($sequentialRefs.Count -gt 0) {
-                Show-SequentialCallChain -SequentialRefs $sequentialRefs -FilePath $filePath -NumberColor $NumberColor -ItemColor $ItemColor
+                Show-SequentialCallChain -SequentialRefs $sequentialRefs -ItemColor $ItemColor
             }
         }
     }

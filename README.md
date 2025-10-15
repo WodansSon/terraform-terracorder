@@ -19,7 +19,8 @@ A high-performance **AST-based semantic analysis tool** that identifies all test
 - **Relational Database Architecture**: Full normalized database with foreign key relationships tracking all test dependencies
 - **Single-Pass AST Processing**: Efficient Replicode extracts all metadata in one pass per file
 - **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns through AST call graph analysis
-- **Database Export**: Complete CSV exports of all 12 database tables for advanced analysis
+- **Database Export**: Complete CSV exports of all 13 database tables for advanced analysis
+- **Resource Ownership Tracking**: Master mapping of all Terraform resources to their owning Azure services
 - **Visual Progress Tracking**: Real-time progress with file-by-file scanning feedback during sequential discovery
 - **Smart Test Command Generation**: Automatically generates optimized `go test` commands by service
 - **Sequential Test Support**: Detects and tracks `acceptance.RunTestsInSequence` patterns via AST parsing
@@ -32,7 +33,6 @@ A high-performance **AST-based semantic analysis tool** that identifies all test
 - **Multiple Query Types**: Direct references, indirect references (includes templates and sequential patterns), or all combined
 - **Visual Blast Radius Trees**: Rich Unicode tree diagrams mapping complete dependency chains
   - Sequential test entry points with nested groups and keys
-  - Template function call chains with multi-level indirection
   - Color-coded output with automatic VS Code theme detection
   - Professional box-drawing characters for clear hierarchy visualization
 - **Data Exploration**: Perfect for analysis, reporting, and understanding test relationships
@@ -78,8 +78,7 @@ $modules = @(
     "DatabaseMode.psm1",
     "FileDiscovery.psm1",
     "ASTImport.psm1",
-    "ProcessingCore.psm1",
-    "RelationalQueries.psm1",
+    "Prerequisites.psm1",
     "UI.psm1"
 )
 
@@ -128,10 +127,44 @@ Database Mode includes **rich visual tree diagrams** that map complete dependenc
 - **Sequential test visualization**: Shows entry points, groups, keys, and referenced functions
 - **Template dependency mapping**: Displays indirect configuration chains across files
 
+#### Understanding Reference Type Labels
+
+When viewing indirect references, TerraCorder shows labels that indicate the **scope and complexity** of each dependency:
+
+- **SELF_CONTAINED**: The template function and the resource it references are in the **same file**
+  - Example: `r.basic() -> azurerm_subnet.test: SELF_CONTAINED`
+  - Simplest case: both the template and resource are co-located
+  - No cross-file dependencies
+
+- **CROSS_FILE**: The template function calls **another template** in a different file before reaching the resource
+  - Example: `r.complete() -> Struct{}.templateVM (chaosstudio -> containers): CROSS_FILE`
+  - Shows the service boundary: `(templateService -> resourceService)`
+  - Indicates a multi-hop dependency chain across files
+  - More complex: changes to intermediate templates may affect this reference
+
+- **CROSS_SERVICE**: The dependency crosses **Azure service boundaries**
+  - Example: `r.method() -> azurerm_subnet.test: CROSS_SERVICE`
+  - The test is in one service (e.g., "monitor") but references a resource owned by another service (e.g., "network")
+  - Important for understanding cross-team dependencies
+  - Often combined with CROSS_FILE: `CROSS_FILE; CROSS_SERVICE`
+
+- **EXTERNAL_REFERENCE**: The target function is defined **outside the current analysis scope**
+  - Example: `r.template() -> <external>: EXTERNAL_REFERENCE; CROSS_SERVICE`
+  - Common in sequential tests that reference functions from other resource test files
+  - Marked as `<external>` since the full definition isn't in the current database
+  - Still shows CROSS_SERVICE if it crosses service boundaries
+
+**Why This Matters:**
+- **SELF_CONTAINED** dependencies are safest to modify (isolated impact)
+- **CROSS_FILE** dependencies require checking intermediate templates
+- **CROSS_SERVICE** dependencies may require coordination with other teams
+- **EXTERNAL_REFERENCE** indicates you may need to analyze additional resources
+
 ### Database Exports
 ```powershell
-# TerraCorder automatically exports 12 CSV tables to the output directory:
-# - Resources.csv                  : Master resource table (Azure resource being analyzed)
+# TerraCorder automatically exports 14 CSV tables to the output directory:
+# - Resources.csv                  : Terraform resources being analyzed (with FK to ResourceRegistrations)
+# - ResourceRegistrations.csv      : Master mapping of ALL resources to owning services (~1,038 resources)
 # - Services.csv                   : All Azure services discovered
 # - Files.csv                      : All test files analyzed
 # - Structs.csv                    : All test resource structs found
@@ -142,6 +175,7 @@ Database Mode includes **rich visual tree diagrams** that map complete dependenc
 # - DirectResourceReferences.csv   : Direct resource usage
 # - IndirectConfigReferences.csv   : Indirect template dependencies
 # - SequentialReferences.csv       : Sequential test relationships
+# - TemplateCallChain.csv          : Template-to-template function calls
 # - ReferenceTypes.csv             : Reference type lookup table
 
 # Default location: ./output/*.csv
@@ -169,7 +203,7 @@ TerraCorder uses AST semantic analysis for comprehensive dependency detection:
 ```
 Phase 1: File Discovery               : 2,695 files found, 1,277 relevant in 4,826 ms
 Phase 2: AST Analysis & DB Import      : 8,473 functions, 26,771 refs in 47,927 ms
-Phase 3: CSV Export                    : 12 tables exported in 489 ms
+Phase 3: CSV Export                    : 14 tables exported in 489 ms
 
 Total Execution Time                  : 53.2 seconds
 ```
@@ -221,7 +255,7 @@ TerraCorder uses a **streamlined 3-phase approach** with AST (Abstract Syntax Tr
 - Single-pass processing with real-time progress tracking
 
 #### Phase 3: CSV Export
-- Exports all 12 database tables to CSV files
+- Exports all 13 database tables to CSV files
 - Maintains proper column headers even for empty tables
 - Provides comprehensive dataset for analysis and reporting
 - Exports `go_test_commands.txt` file for CI/CD integration
@@ -231,7 +265,7 @@ TerraCorder uses a **streamlined 3-phase approach** with AST (Abstract Syntax Tr
 Database Mode loads previously exported CSV files for instant analysis:
 
 #### Database Initialization
-- Imports all 12 CSV tables into in-memory database
+- Imports all 13 CSV tables into in-memory database
 - Rebuilds indexes and foreign key relationships
 - Displays comprehensive statistics (typically 5-10 seconds)
 
@@ -240,7 +274,6 @@ Database Mode loads previously exported CSV files for instant analysis:
 - **ShowDirectReferences**: Display all direct resource usage and attribute references
 - **ShowIndirectReferences**: Display template dependencies and sequential test chains with **visual tree diagrams**
   - Sequential test entry points organized by groups and keys
-  - Template function call chains showing multi-level dependencies
   - Color-coded tree structure with professional Unicode box-drawing
   - External reference markers for cross-resource dependencies
 - **ShowAllReferences**: Display complete blast radius analysis (Direct + Indirect) with full visual output
@@ -283,24 +316,26 @@ TerraCorder uses **Replicode**, a Go AST (Abstract Syntax Tree) analyzer for acc
 
 ## Database Schema
 
-TerraCorder uses a **normalized relational database** with 12 tables:
+TerraCorder uses a **normalized relational database** with 14 tables:
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
-| `Resources` | Master resource table | ResourceRefId (PK), ResourceName |
-| `Services` | Azure services | ServiceRefId (PK), Name, ResourceRefId (FK) |
+| `Resources` | Terraform resources being analyzed | ResourceRefId (PK), ResourceName, ResourceRegistrationRefId (FK) |
+| `ResourceRegistrations` | Master mapping of ALL resources to owning services | ResourceRegistrationRefId (PK), ServiceRefId (FK), ResourceName |
+| `Services` | Azure services | ServiceRefId (PK), Name |
 | `Files` | Test files | FileRefId (PK), FilePath, ServiceRefId (FK) |
-| `Structs` | Test resource structs | StructRefId (PK), StructName, FileRefId (FK), ResourceRefId (FK) |
-| `TestFunctions` | Test functions | TestFunctionRefId (PK), FunctionName, FileRefId (FK), StructRefId (FK), ResourceRefId (FK) |
+| `Structs` | Test resource structs | StructRefId (PK), StructName, FileRefId (FK) |
+| `TestFunctions` | Test functions | TestFunctionRefId (PK), FunctionName, FileRefId (FK), StructRefId (FK) |
 | `TestFunctionSteps` | Test steps/configs | TestFunctionStepRefId (PK), TestFunctionRefId (FK), ReferenceTypeId (FK) |
-| `TemplateFunctions` | Template methods | TemplateFunctionRefId (PK), TemplateFunctionName, StructRefId (FK), ResourceRefId (FK) |
+| `TemplateFunctions` | Template methods | TemplateFunctionRefId (PK), TemplateFunctionName, StructRefId (FK) |
 | `TemplateReferences` | Template calls | TemplateReferenceRefId (PK), TestFunctionRefId (FK), TemplateReference |
-| `DirectResourceReferences` | Direct usage | DirectRefId (PK), FileRefId (FK), ReferenceTypeId (FK) |
+| `DirectResourceReferences` | Direct usage | DirectRefId (PK), TemplateFunctionRefId (FK), ReferenceTypeId (FK) |
 | `IndirectConfigReferences` | Template deps | IndirectRefId (PK), TemplateReferenceRefId (FK), SourceTemplateFunctionRefId (FK) |
 | `SequentialReferences` | Sequential links | SequentialRefId (PK), EntryPointFunctionRefId (FK), ReferencedFunctionRefId (FK) |
+| `TemplateCallChain` | Template→template calls | TemplateCallChainRefId (PK), SourceTemplateFunctionRefId (FK), TargetTemplateFunctionRefId (FK), ReferenceTypeId (FK) |
 | `ReferenceTypes` | Reference lookup | ReferenceTypeId (PK), ReferenceTypeName |
 
-**Note**: The `Resources` table is the master table containing the Azure resource being analyzed (e.g., "azurerm_virtual_network"). Four tables (Services, Structs, TestFunctions, TemplateFunctions) contain `ResourceRefId` foreign keys linking them to the resource under analysis.
+**Note**: The `Resources` table contains the specific resources being analyzed in the current run (1-N rows), with a foreign key to `ResourceRegistrations` which contains the master mapping of ALL ~1,038 resources to their owning services. This separation enables resource ownership tracking for cross-service dependency analysis.
 
 ## Sample Output
 
@@ -330,7 +365,7 @@ Phase 2: AST Analysis and Database Import...
 Phase 2: Completed in 2,456 ms
 
 Phase 3: Exporting Database CSV Files...
- [INFO] Exported: 12 Tables
+ [INFO] Exported: 14 Tables
  [INFO] Exported: go_test_commands.txt
 Phase 3: Completed in 61 ms
 
@@ -413,20 +448,6 @@ Database Mode provides **rich visual tree diagrams** for dependency analysis:
        └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleDefinition_basic
 ```
 
-#### Template Function Dependency Chain
-```
-============================================================
-  Template Function Call Chain:
-============================================================
- Entry Point: 664: TestAccSiteRecoveryFabric_basic
-  │
-  └──► Template: 1405: (r SiteRecoveryFabricResource).basic
-       │
-       └──► Template: 1413: (r SiteRecoveryFabricResource).template
-            │
-            └──► Function: 1499: testAccSiteRecoveryFabric_basicConfig
-```
-
 #### Tree Symbols Explained
 - `│` Vertical pipe: Continues the tree structure downward
 - `├` Tee connector: Branches to a sibling (more items follow)
@@ -449,7 +470,8 @@ Database Mode provides **rich visual tree diagrams** for dependency analysis:
 
 ### CSV Export Files (in output directory)
 ```
-Resources.csv                        - Master resource table (e.g., azurerm_virtual_network)
+Resources.csv                        - Terraform resources being analyzed (with FK to ResourceRegistrations)
+ResourceRegistrations.csv            - Master mapping of ALL resources to owning services (~1,038 resources)
 Services.csv                         - All Azure services
 Files.csv                            - All test files
 Structs.csv                          - Test resource structs
@@ -460,6 +482,7 @@ TemplateReferences.csv               - Template method calls
 DirectResourceReferences.csv         - Direct resource usage
 IndirectConfigReferences.csv         - Template dependencies
 SequentialReferences.csv             - Sequential test links
+TemplateCallChain.csv                - Template-to-template function calls
 ReferenceTypes.csv                   - Reference type lookup
 go_test_commands.txt                 - Generated test commands
 ```
