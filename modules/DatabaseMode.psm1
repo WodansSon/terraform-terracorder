@@ -11,21 +11,6 @@ $script:ARROW_CHAR = [char]0x2192  # Unicode Right Arrow Character
 # MODULE STATE: Cache for loaded data tables
 # ============================================================================
 $script:DatabaseDirectory = $null  # Store database directory for context
-
-# ============================================================================
-# PERFORMANCE OPTIMIZATION: Precompiled Regex Patterns
-# ============================================================================
-# These regex patterns are compiled once at module load time and reused across
-# all function calls. This provides ~3x performance improvement over using
-# PowerShell's -match and -replace operators, which recompile the pattern on
-# every use. The RegexOptions.Compiled flag generates IL code for the regex,
-# making it much faster for repeated use.
-#
-# Performance Impact:
-# - Without precompilation: ~9 seconds for ShowIndirectReferences
-# - With precompilation: ~3 seconds for ShowIndirectReferences
-# - No functional changes to output
-# ============================================================================
 $script:CompiledRegex = @{
     # Matches: resource "azurerm_..." or data "azurerm_..."
     # Groups: 1=keyword(resource|data), 2=resource_type, 3=rest_of_line
@@ -46,49 +31,6 @@ $script:CompiledRegex = @{
 # ============================================================================
 # VISUALIZATION FUNCTIONS
 # ============================================================================
-
-function Show-DatabaseStatistics {
-    <#
-    .SYNOPSIS
-    Display available analysis options for the database
-
-    .PARAMETER ItemColor
-    Color for item types in output
-
-    .PARAMETER BaseColor
-    Color for base text in output
-
-    .PARAMETER InfoColor
-    Color for info prefix in output
-    #>
-    param(
-        [Parameter(Mandatory = $false)]
-        [string]$ItemColor = "Cyan",
-
-        [Parameter(Mandatory = $false)]
-        [string]$BaseColor = "Gray",
-
-        [Parameter(Mandatory = $false)]
-        [string]$InfoColor = "Cyan"
-    )
-
-    Write-Host ""
-    Write-Separator
-    Write-Host "  AVAILABLE ANALYSIS OPTIONS" -ForegroundColor $ItemColor
-    Write-Separator
-    Write-Host ""
-
-    Write-Host "  Query Options:" -ForegroundColor $InfoColor
-    Write-Host ""
-    Write-Host "    -ShowDirectReferences      " -ForegroundColor Green -NoNewline
-    Write-Host ": View all direct resource/data declarations and attribute usages" -ForegroundColor $BaseColor
-    Write-Host "    -ShowIndirectReferences    " -ForegroundColor Green -NoNewline
-    Write-Host ": View template dependencies and sequential test chains" -ForegroundColor $BaseColor
-    Write-Host ""
-    Write-Host "  Examples:" -ForegroundColor $InfoColor
-    Write-Host "    .\terracorder.ps1 -DatabaseDirectory .\output -ShowDirectReferences" -ForegroundColor $BaseColor
-    Write-Host "    .\terracorder.ps1 -DatabaseDirectory .\output -ShowIndirectReferences" -ForegroundColor $BaseColor
-}
 
 function Show-DirectReferences {
     <#
@@ -339,6 +281,9 @@ function Show-TemplateFunctionDependencies {
     .PARAMETER TemplateRefs
     Array of template reference info objects
 
+    .PARAMETER Colors
+    VS Code syntax color scheme object
+
     .PARAMETER NumberColor
     Color for numbers in output
 
@@ -348,6 +293,9 @@ function Show-TemplateFunctionDependencies {
     param(
         [Parameter(Mandatory = $true)]
         [array]$TemplateRefs,
+
+        [Parameter(Mandatory = $false)]
+        [PSCustomObject]$Colors = $null,
 
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Yellow",
@@ -365,8 +313,12 @@ function Show-TemplateFunctionDependencies {
     Write-Host "     Test Configuration Function Dependencies:" -ForegroundColor $ItemColor
     Write-Separator -Indent 3
 
-    # Get VS Code color scheme for function highlighting
-    $colors = Get-VSCodeSyntaxColors
+    # Get VS Code color scheme for function highlighting (use provided or get new)
+    if (-not $Colors) {
+        $colors = Get-VSCodeSyntaxColors
+    } else {
+        $colors = $Colors
+    }
 
     # Group by test function to consolidate steps
     $functionGroups = @{}
@@ -420,7 +372,7 @@ function Show-TemplateFunctionDependencies {
         foreach ($stepInfo in $sortedSteps) {
             $stepNumStr = $stepInfo.TestFuncStep.StepIndex.ToString().PadLeft($maxStepWidth)
             Write-HostRGB "               Step " $colors.Highlight -NoNewline
-            Write-Host "$stepNumStr" -ForegroundColor $NumberColor -NoNewline
+            Write-HostRGB "$stepNumStr" $colors.Number -NoNewline
             Write-HostRGB ": " $colors.Highlight -NoNewline
             Write-HostRGB "Config" $colors.Highlight -NoNewline
             Write-HostRGB ": " $colors.Label -NoNewline
@@ -445,7 +397,7 @@ function Show-TemplateFunctionDependencies {
                 # For CROSS_FILE, show the call chain with arrow
                 # If same struct: r.method1 -> r.method2: CROSS_FILE
                 # If different struct: r.method1 -> OtherStruct{}.method2: CROSS_FILE
-                # For EXTERNAL_REFERENCE, show: r.method -> <external>: EXTERNAL_REFERENCE
+                # For EXTERNAL_REFERENCE, show: r.method -> EXTERNAL_REFERENCE
                 # For SELF_CONTAINED, just show type since receiver IS the template: r.basic: SELF_CONTAINED
                 if ($fileRefType -eq $REF_NAME_CROSS_FILE -and $stepInfo.TargetTemplateInfo) {
                     # Target info was pre-joined from database
@@ -469,8 +421,8 @@ function Show-TemplateFunctionDependencies {
                         Write-HostRGB "$($targetFunc.TemplateFunctionName)" $colors.FunctionHighlight -NoNewline
                     } else {
                         # Different struct: show full notation (e.g., OtherStruct{}.method)
-                        Write-HostRGB "$($targetStruct.StructName)" $colors.Variable -NoNewline
-                        Write-HostRGB "{}" $colors.VariableBracket -NoNewline
+                        Write-HostRGB "$($targetStruct.StructName)" $colors.Type -NoNewline
+                        Write-HostRGB "{}" $colors.BracketLevel1 -NoNewline
                         Write-HostRGB "." $colors.Label -NoNewline
                         Write-HostRGB "$($targetFunc.TemplateFunctionName)" $colors.FunctionHighlight -NoNewline
                     }
@@ -497,26 +449,26 @@ function Show-TemplateFunctionDependencies {
                         }
 
                         if ($templateServiceName) {
-                            Write-Host "$templateServiceName" -ForegroundColor Cyan -NoNewline
+                            Write-HostRGB "$templateServiceName" $colors.Type -NoNewline
                             Write-Host " " -NoNewline
                             Write-HostRGB "->" $colors.Label -NoNewline
                             Write-Host " " -NoNewline
                         }
                         if ($stepInfo.ResourceOwningServiceName) {
-                            Write-Host "$($stepInfo.ResourceOwningServiceName)" -ForegroundColor Cyan -NoNewline
+                            Write-HostRGB "$($stepInfo.ResourceOwningServiceName)" $colors.Type -NoNewline
                         }
                         Write-HostRGB ")" $colors.Label -NoNewline
                     }
 
                     Write-HostRGB ":" $colors.Label -NoNewline
                     Write-Host " " -NoNewline
-                    Write-Host "$fileRefType" -ForegroundColor Yellow -NoNewline
+                    Write-HostRGB "$fileRefType" $colors.Function -NoNewline
 
                     # Show service impact type if cross-service (append with semicolon)
                     if ($serviceRefType -eq $REF_NAME_CROSS_SERVICE) {
                         Write-HostRGB ";" $colors.Label -NoNewline
                         Write-Host " " -NoNewline
-                        Write-Host "$serviceRefType" -ForegroundColor Magenta -NoNewline
+                        Write-HostRGB "$serviceRefType" $colors.ControlFlow -NoNewline
                     }
                 }
                 # For EXTERNAL_REFERENCE, show that it calls something unknown/external
@@ -526,17 +478,14 @@ function Show-TemplateFunctionDependencies {
                     Write-Host " " -NoNewline
                     Write-HostRGB "->" $colors.Label -NoNewline
                     Write-Host " " -NoNewline
-                    Write-Host "<external>" -ForegroundColor DarkGray -NoNewline
-                    Write-HostRGB ":" $colors.Label -NoNewline
-                    Write-Host " " -NoNewline
-                    Write-Host "$fileRefType" -ForegroundColor Magenta -NoNewline
+                    Write-HostRGB "$fileRefType" $colors.RegexClass -NoNewline
 
                     # Show service impact type if cross-service (test service != resource service)
                     # This indicates the test impacts a resource in a different service, not that the external call crosses services
                     if ($serviceRefType -eq $REF_NAME_CROSS_SERVICE) {
                         Write-HostRGB ";" $colors.Label -NoNewline
                         Write-Host " " -NoNewline
-                        Write-Host "$serviceRefType" -ForegroundColor Magenta -NoNewline
+                        Write-HostRGB "$serviceRefType" $colors.ControlFlow -NoNewline
                     }
                 }
                 # For SELF_CONTAINED/EMBEDDED_SELF, just show the type (receiver IS the template)
@@ -546,13 +495,13 @@ function Show-TemplateFunctionDependencies {
                     Write-Host " " -NoNewline
 
                     $fileRefColor = switch ($fileRefType) {
-                        $REF_NAME_CROSS_FILE { "Yellow" }
-                        $REF_NAME_EXTERNAL_REFERENCE { "Magenta" }
-                        $REF_NAME_SELF_CONTAINED { "Green" }
-                        $REF_NAME_EMBEDDED_SELF { "Green" }
-                        default { "Gray" }
+                        $REF_NAME_CROSS_FILE { $colors.Function }
+                        $REF_NAME_EXTERNAL_REFERENCE { $colors.RegexClass }
+                        $REF_NAME_SELF_CONTAINED { $colors.Comment }
+                        $REF_NAME_EMBEDDED_SELF { $colors.Type }
+                        default { $colors.Label }
                     }
-                    Write-Host "$fileRefType" -ForegroundColor $fileRefColor -NoNewline
+                    Write-HostRGB "$fileRefType" $fileRefColor -NoNewline
                 }
             }
 
@@ -569,12 +518,18 @@ function Show-SequentialCallChain {
     .PARAMETER SequentialRefs
     Array of sequential reference info objects
 
+    .PARAMETER Colors
+    VS Code syntax color scheme object
+
     .PARAMETER ItemColor
     Color for item types in output
     #>
     param(
         [Parameter(Mandatory = $true)]
         [array]$SequentialRefs,
+
+        [Parameter(Mandatory = $false)]
+        [PSCustomObject]$Colors = $null,
 
         [Parameter(Mandatory = $false)]
         [string]$ItemColor = "Cyan"
@@ -588,17 +543,25 @@ function Show-SequentialCallChain {
     Write-Separator -Indent 3
     Write-Host "     Sequential Call Chain:" -ForegroundColor $ItemColor
     Write-Separator -Indent 3
+    Write-Host ""
 
-    # Get VS Code color scheme
-    $colors = Get-VSCodeSyntaxColors
+    # Get VS Code color scheme (use provided or get new)
+    if (-not $Colors) {
+        $colors = Get-VSCodeSyntaxColors
+    } else {
+        $colors = $Colors
+    }
 
     # Define Unicode box-drawing characters
-    $pipe = [char]0x2502      # vertical line
-    $tee = [char]0x251C       # T-junction (branch continues)
+    $vPipe = [char]0x2502     # vertical line
+    $rTee = [char]0x251C      # T-junction right (branch continues)
     $corner = [char]0x2514    # corner (last branch)
-    $arrow = [char]0x2500     # horizontal line
-    $teeDown = [char]0x252C   # T-junction down (children below)
-    $rarrow = [char]0x25BA    # right-pointing arrow
+    $hPipe = [char]0x2500     # horizontal line
+    $dTee = [char]0x252C      # T-junction down (children below)
+    $rArrow = [char]0x25BA    # right-pointing arrow
+
+    $treeColor = $colors.LineNumberMuted
+    $elementColor = $colors.Type
 
     # Group by sequential entry point (these are the functions that call t.Run)
     $entryPointGroups = @{}
@@ -650,13 +613,14 @@ function Show-SequentialCallChain {
         $entryPoint = $epGroup.EntryPoint
 
         # Display entry point
-        Write-HostRGB "      Entry Point: " $colors.Highlight -NoNewline
+        Write-HostRGB "      Entry Point" $elementColor -NoNewline
+        Write-HostRGB ": " $colors.Label -NoNewline
         Write-HostRGB "$($entryPoint.Line)" $colors.LineNumber -NoNewline
-        Write-HostRGB ": " $colors.Highlight -NoNewline
-        Write-HostRGB "$($entryPoint.FunctionName)" $colors.Function
+        Write-HostRGB ": " $colors.Label -NoNewline
+        Write-HostRGB "$($entryPoint.FunctionName)" $colors.Highlight
 
         # Display entry point pipe
-        Write-HostRGB "       $pipe" $colors.Highlight
+        Write-HostRGB "       $vPipe" $treeColor
 
         # Display each sequential group
         # Use GetEnumerator() to avoid conflicts with reserved property names like "keys"
@@ -669,7 +633,7 @@ function Show-SequentialCallChain {
             $isLastGroup = ($currentGroupIndex -eq $totalGroups)
 
             # Group level - Keys align with the T-down character position
-            $groupPrefix = if ($isLastGroup) { "          " } else { "       $pipe  " }
+            $groupPrefix = if ($isLastGroup) { "          " } else { "       $vPipe  " }
 
             $rawSteps = $epGroup.SequentialGroups[$groupName]
 
@@ -681,12 +645,12 @@ function Show-SequentialCallChain {
             $stepCount = $steps.Count
 
             # Determine group branch based on position - always show T-down since groups have keys as children
-            $groupBranch = if ($isLastGroup) { "$corner$arrow$arrow$teeDown" } else { "$tee$arrow$arrow$teeDown" }
+            $groupBranch = if ($isLastGroup) { "$corner$hPipe$hPipe$dTee" } else { "$rTee$hPipe$hPipe$dTee" }
 
-            Write-HostRGB "       $groupBranch$arrow$rarrow" $colors.Highlight -NoNewline
-            Write-HostRGB " Sequential Group: " $colors.Highlight -NoNewline
-            Write-HostRGB "$groupName" $colors.String
-            Write-HostRGB "$groupPrefix$pipe" $colors.Highlight
+            Write-HostRGB "       $groupBranch$hPipe$hPipe$hPipe$rArrow" $treeColor -NoNewline
+            Write-HostRGB " Group   " $elementColor -NoNewline
+            Write-HostRGB ": " $colors.Label -NoNewline
+            Write-HostRGB "`"$groupName`"" $colors.String
 
             $currentStep = 0
             foreach ($keyGroup in $steps) {
@@ -695,40 +659,49 @@ function Show-SequentialCallChain {
 
                 # When there's only one key, use corner; otherwise use tee/corner based on position
                 if ($stepCount -eq 1) {
-                    $stepBranch = "$corner$arrow$teeDown$arrow"
+                    $stepBranch = "$corner$hPipe$dTee$hPipe"
                 } else {
-                    $stepBranch = if ($isLastStep) { "$corner$arrow$teeDown$arrow" } else { "$tee$arrow$teeDown$arrow" }
+                    $stepBranch = if ($isLastStep) { "$corner$hPipe$dTee$hPipe" } else { "$rTee$hPipe$dTee$hPipe" }
                 }
 
                 # Key level - builds on group prefix
-                $keyPrefix = if ($isLastStep) { "$groupPrefix " } else { "$groupPrefix$pipe" }
+                $keyPrefix = if ($isLastStep) { "$groupPrefix " } else { "$groupPrefix$vPipe" }
 
                 # Get the first step from this key group (they all have the same key)
                 $step = $keyGroup.Group | Select-Object -First 1
 
                 # Key header with T-junction down for children
-                Write-HostRGB "$groupPrefix$stepBranch$rarrow " $colors.Highlight -NoNewline
-                Write-HostRGB "Key     : " $colors.Highlight -NoNewline
+                Write-HostRGB "$groupPrefix$stepBranch$rArrow " $treeColor -NoNewline
+                Write-HostRGB "Key     " $elementColor -NoNewline
+                Write-HostRGB ": " $colors.Label -NoNewline
                 if ([string]::IsNullOrEmpty($step.SequentialKey)) {
                     Write-Host "(empty)" -ForegroundColor DarkGray
                 } else {
-                    Write-HostRGB "$($step.SequentialKey)" $colors.String
+                    Write-HostRGB "`"$($step.SequentialKey)`"" $colors.String
                 }
 
                 # Configuration Function - always on one line with corner
-                Write-HostRGB "$keyPrefix $corner$arrow$rarrow Function: " $colors.Highlight -NoNewline
+                Write-HostRGB "$keyPrefix $corner$hPipe$rArrow " $treeColor -NoNewline
+                Write-HostRGB "Function" $elementColor -NoNewline
+                Write-HostRGB ": " $colors.Label -NoNewline
 
-                # Show line number or External Reference prefix, then function name
+                # Show line number or reference type prefix, then function name
                 if ([string]::IsNullOrWhiteSpace($step.TestFunc.Line) -or $step.TestFunc.Line -eq 0) {
-                    # External Reference
-                    Write-HostRGB "External Reference" $colors.Function -NoNewline
-                    Write-HostRGB ": " $colors.Label -NoNewline
-
                     # Function name
                     if ([string]::IsNullOrEmpty($step.TestFunc.FunctionName)) {
                         Write-Host "(unknown)" -ForegroundColor DarkGray
                     } else {
-                        Write-HostRGB "$($step.TestFunc.FunctionName)" $colors.Variable
+                        Write-HostRGB "$($step.TestFunc.FunctionName)" $colors.Highlight -NoNewline
+                    }
+
+                    Write-HostRGB ": " $colors.Label -NoNewline
+
+                    # No line number - show reference type (e.g., EXTERNAL_REFERENCE, PRIVATE_REFERENCE, PUBLIC_REFERENCE)
+                    if ($step.TestFunc.ReferenceTypeRefId -and $step.TestFunc.ReferenceTypeRefId -gt 0) {
+                        $refTypeName = Get-ReferenceTypeName -ReferenceTypeId $step.TestFunc.ReferenceTypeRefId
+                        Write-HostRGB "$refTypeName" $colors.RegexClass
+                    } else {
+                        Write-HostRGB "EXTERNAL_REFERENCE" $colors.RegexClass
                     }
                 } else {
                     # Has line number - show it as prefix
@@ -739,18 +712,18 @@ function Show-SequentialCallChain {
                     if ([string]::IsNullOrEmpty($step.TestFunc.FunctionName)) {
                         Write-Host "(unknown)" -ForegroundColor DarkGray
                     } else {
-                        Write-HostRGB "$($step.TestFunc.FunctionName)" $colors.Function
+                        Write-HostRGB "$($step.TestFunc.FunctionName)" $colors.Highlight
                     }
                 }
 
                 if (-not $isLastStep) {
-                    Write-HostRGB "$groupPrefix$pipe" $colors.Highlight
+                    Write-HostRGB "$groupPrefix$vPipe" $treeColor
                 }
             }
 
             # Continuation pipe between groups (unless it's the last group)
             if (-not $isLastGroup) {
-                Write-HostRGB "       $pipe" $colors.Highlight
+                Write-HostRGB "       $vPipe" $treeColor
             }
         }
     }
@@ -798,17 +771,34 @@ function Show-IndirectReferences {
         $script:DatabaseDirectory = $DatabaseDirectory
     }
 
+    # Get VS Code color scheme for consistent syntax highlighting
+    $colors = Get-VSCodeSyntaxColors
+
+    # Define semantic element colors
+    $headerColor = $colors.Type
+    $labelColor = $colors.Highlight
+    $textColor = $colors.Comment
+    $numberColor = $colors.Number
+    $lowRiskColor = $colors.String        # Green-ish/Salmon
+    $mediumRiskColor = $colors.EscapeChar # Muted gold/yellow
+    $highRiskColor = $colors.ControlFlow  # Purple
+    $mutedColor = $colors.LineNumberMuted
+    $bulletColor = $colors.LineNumberMuted
+
     Write-Host ""
     Write-Separator
     Write-Host " INDIRECT REFERENCES ANALYSIS:" -ForegroundColor $ItemColor
     Write-Separator
     Write-Host ""
 
-    $indirectRefs = @(Get-IndirectConfigReferences)
-    $templateRefs = @(Get-TemplateReferences)
-    $sequentialRefs = @(Get-SequentialReferences)
+    $perfTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
-    if ($indirectRefs.Count -eq 0 -and $templateRefs.Count -eq 0 -and $sequentialRefs.Count -eq 0) {
+    # Use hash tables directly instead of converting to arrays
+    $indirectRefsHash = Get-IndirectConfigReferencesHashTable
+    $templateRefsHash = Get-TemplateReferencesHashTable
+    $sequentialRefsHash = Get-SequentialReferencesHashTable
+
+    if ($indirectRefsHash.Count -eq 0 -and $templateRefsHash.Count -eq 0 -and $sequentialRefsHash.Count -eq 0) {
         Show-PhaseMessageHighlight -Message "No Indirect References Found In Database" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $BaseColor -InfoColor $InfoColor
         return
     }
@@ -832,10 +822,11 @@ function Show-IndirectReferences {
     $sameServiceRefs = @()
     $crossServiceRefs = @()
 
-    foreach ($indirectRef in $indirectRefs) {
-        # Get the test function's service
-        $templateRef = $templateRefs | Where-Object { $_.TemplateReferenceRefId -eq $indirectRef.TemplateReferenceRefId } | Select-Object -First 1
-        if ($templateRef) {
+    foreach ($indirectRef in $indirectRefsHash.Values) {
+        # Get the test function's service using hash table lookup
+        $templateRefId = $indirectRef.TemplateReferenceRefId
+        if ($templateRefsHash.ContainsKey($templateRefId)) {
+            $templateRef = $templateRefsHash[$templateRefId]
             $testFunc = Get-TestFunctionById -TestFunctionRefId $templateRef.TestFunctionRefId
             if ($testFunc -and $testFunc.FileRefId) {
                 $fileRefId = [int]$testFunc.FileRefId
@@ -854,87 +845,63 @@ function Show-IndirectReferences {
         }
     }
 
-    Write-Host "  Total Impact: " -ForegroundColor $InfoColor -NoNewline
-    Write-Host "$($indirectRefs.Count + $sequentialRefs.Count) " -ForegroundColor $NumberColor -NoNewline
-    Write-Host "test functions affected by this resource change" -ForegroundColor $InfoColor
+    Write-Host "  Total Impact: " -ForegroundColor $ItemColor -NoNewline
+    Write-Host "$($indirectRefsHash.Count + $sequentialRefsHash.Count) " -ForegroundColor Yellow -NoNewline
+    Write-Host "test functions affected by this resource change" -ForegroundColor $BaseColor
     Write-Host ""
 
     # Template Dependencies (explain what this means)
-    if ($indirectRefs.Count -gt 0) {
-        Write-Host "  Template Dependencies: " -ForegroundColor $InfoColor -NoNewline
-        Write-Host "$($indirectRefs.Count) " -ForegroundColor $NumberColor -NoNewline
-        Write-Host "tests use templates that configure this resource" -ForegroundColor $InfoColor
+    if ($indirectRefsHash.Count -gt 0) {
+        Write-Host "  Template Dependencies: " -ForegroundColor $ItemColor -NoNewline
+        Write-Host "$($indirectRefsHash.Count) " -ForegroundColor Yellow -NoNewline
+        Write-Host "tests use templates that configure this resource" -ForegroundColor $BaseColor
 
         if ($sameServiceRefs.Count -gt 0) {
-            Write-Host "     - " -ForegroundColor DarkGray -NoNewline
-            Write-Host "$($sameServiceRefs.Count) " -ForegroundColor Green -NoNewline
-            Write-Host "templates in the same service folder " -ForegroundColor Gray -NoNewline
-            Write-Host "(" -ForegroundColor Gray -NoNewline
-            Write-Host "LOW RISK" -ForegroundColor Green -NoNewline
-            Write-Host ")" -ForegroundColor Gray
+            Write-Host "     - " -ForegroundColor $ItemColor -NoNewline
+            Write-Host "$($sameServiceRefs.Count) " -ForegroundColor Yellow  -NoNewline
+            Write-Host "templates in the same service folder " -ForegroundColor $BaseColor -NoNewline
+            Write-Host "(" -ForegroundColor $BaseColor -NoNewline
+            Write-HostRGB "LOW RISK" $textColor -NoNewline
+            Write-Host ")" -ForegroundColor $BaseColor
         }
         if ($crossServiceRefs.Count -gt 0) {
-            Write-Host "     - " -ForegroundColor DarkGray -NoNewline
-            Write-Host "$($crossServiceRefs.Count) " -ForegroundColor Magenta -NoNewline
-            Write-Host "templates in different service folders " -ForegroundColor Gray -NoNewline
-            Write-Host "(" -ForegroundColor Gray -NoNewline
-            Write-Host "HIGH RISK - CROSS SERVICE REFERENCE" -ForegroundColor Magenta -NoNewline
-            Write-Host ")" -ForegroundColor Gray
+            Write-Host "     - " -ForegroundColor $ItemColor -NoNewline
+            Write-Host "$($crossServiceRefs.Count) " -Yellow -NoNewline
+            Write-Host "templates in different service folders " -ForegroundColor $BaseColor -NoNewline
+            Write-Host "(" $mutedColor -ForegroundColor $BaseColor -NoNewline
+            Write-HostRGB "HIGH RISK " $highRiskColor -NoNewline
+            Write-Host "- " -ForegroundColor $BaseColor -NoNewline
+            Write-HostRGB "CROSS SERVICE REFERENCE" $highRiskColor -NoNewline
+            Write-Host ")" -ForegroundColor $BaseColor
         }
         Write-Host ""
     }
 
     # Sequential Test Chains (explain what this means)
-    if ($sequentialRefs.Count -gt 0) {
-        Write-Host "  Sequential Test Chains: " -ForegroundColor $InfoColor -NoNewline
-        Write-Host "$($sequentialRefs.Count) " -ForegroundColor $NumberColor -NoNewline
-        Write-Host "tests are called by other tests in the blast radius" -ForegroundColor $InfoColor
-        Write-Host "     - " -ForegroundColor DarkGray -NoNewline
-        Write-Host "$($sequentialRefs.Count) " -ForegroundColor Yellow -NoNewline
-        Write-Host "tests run as part of larger test sequences " -ForegroundColor Gray -NoNewline
-        Write-Host "(" -ForegroundColor Gray -NoNewline
-        Write-Host "MEDIUM RISK" -ForegroundColor Yellow -NoNewline
-        Write-Host ")" -ForegroundColor Gray
+    if ($sequentialRefsHash.Count -gt 0) {
+        Write-Host "  Sequential Test Chains: " -ForegroundColor $ItemColor -NoNewline
+        Write-Host "$($sequentialRefsHash.Count) " -ForegroundColor Yellow -NoNewline
+        Write-Host "tests are called by other tests in the blast radius" -ForegroundColor $BaseColor
+        Write-Host "     - " -ForegroundColor $ItemColor -NoNewline
+        Write-Host "$($sequentialRefsHash.Count) " -ForegroundColor Yellow -NoNewline
+        Write-Host "tests run as part of larger test sequences " -ForegroundColor $BaseColor -NoNewline
+        Write-Host "(" -ForegroundColor $BaseColor -NoNewline
+        Write-HostRGB "MEDIUM RISK" $mediumRiskColor -NoNewline
+        Write-Host ")" -ForegroundColor $BaseColor
         Write-Host ""
     }
 
     Write-Separator
 
-    # Pre-build template reference lookup for O(1) access
-    $templateRefLookup = @{}
-    foreach ($templateRef in $templateRefs) {
-        if (-not $templateRefLookup.ContainsKey($templateRef.TemplateReferenceRefId)) {
-            $templateRefLookup[$templateRef.TemplateReferenceRefId] = $templateRef
-        }
-    }
+    $templateRefLookup = Get-TemplateReferencesHashTable  # Already indexed by TemplateReferenceRefId
+    $testFuncStepLookup = Get-TestStepsHashTable          # Already indexed by TestStepRefId
+    $templateFuncLookup = Get-TemplateFunctionsHashTable  # Already indexed by TemplateFunctionRefId
+    $structsLookup = Get-StructsHashTable                 # Already indexed by StructRefId
+    $servicesLookup = Get-ServicesHashTable               # Already indexed by ServiceRefId
 
-    # Pre-build test function steps lookup for O(1) access
-    $testFuncStepLookup = @{}
-    foreach ($step in Get-AllTestFunctionSteps) {
-        if (-not $testFuncStepLookup.ContainsKey($step.TestStepRefId)) {
-            $testFuncStepLookup[$step.TestStepRefId] = $step
-        }
-    }
-
-    # Pre-build template functions lookup for O(1) access to source template file paths
-    $templateFuncLookup = @{}
-    foreach ($templateFunc in Get-TemplateFunctions) {
-        if (-not $templateFuncLookup.ContainsKey($templateFunc.TemplateFunctionRefId)) {
-            $templateFuncLookup[$templateFunc.TemplateFunctionRefId] = $templateFunc
-        }
-    }
-
-    # Pre-build structs lookup for O(1) access
-    $structsLookup = @{}
-    foreach ($struct in Get-Structs) {
-        if (-not $structsLookup.ContainsKey($struct.StructRefId)) {
-            $structsLookup[$struct.StructRefId] = $struct
-        }
-    }
-
-    # Pre-build TemplateCallChain lookup indexed by SourceTemplateFunctionRefId
+    # Template call chain needs special indexing by SourceTemplateFunctionRefId
     $templateCallChainLookup = @{}
-    foreach ($callChain in Get-TemplateCallChains) {
+    foreach ($callChain in (Get-TemplateCallChainsHashTable).Values) {
         $sourceId = $callChain.SourceTemplateFunctionRefId
         if (-not $templateCallChainLookup.ContainsKey($sourceId)) {
             $templateCallChainLookup[$sourceId] = @()
@@ -953,7 +920,7 @@ function Show-IndirectReferences {
 
     # Build file-based grouping - Join: IndirectConfigReferences -> TemplateReferences -> TestFunctionSteps -> TestFunctions -> Files
     $fileGroups = @{}
-    foreach ($indirectRef in $indirectRefs) {
+    foreach ($indirectRef in $indirectRefsHash.Values) {
         # Get TemplateReference
         $templateRef = $templateRefLookup[$indirectRef.TemplateReferenceRefId]
         if (-not $templateRef) { continue }
@@ -1044,9 +1011,8 @@ function Show-IndirectReferences {
             if ($testFile -and $testFile.ServiceRefId -and $resourceOwningServiceId) {
                 $testServiceId = [int]$testFile.ServiceRefId
 
-                # Get the test service name for display
-                $allServices = Get-Services
-                $testService = $allServices | Where-Object { $_.ServiceRefId -eq $testServiceId } | Select-Object -First 1
+                # Get the test service name for display (use pre-built lookup)
+                $testService = $servicesLookup[$testServiceId]
                 if ($testService) {
                     $testServiceName = $testService.Name
                 }
@@ -1059,11 +1025,10 @@ function Show-IndirectReferences {
             }
         }
 
-        # Get the resource-owning service name for display
+        # Get the resource-owning service name for display (use pre-built lookup)
         $resourceOwningServiceName = $null
         if ($resourceOwningServiceId) {
-            $allServices = Get-Services
-            $owningService = $allServices | Where-Object { $_.ServiceRefId -eq $resourceOwningServiceId } | Select-Object -First 1
+            $owningService = $servicesLookup[$resourceOwningServiceId]
             if ($owningService) {
                 $resourceOwningServiceName = $owningService.Name
             }
@@ -1105,7 +1070,7 @@ function Show-IndirectReferences {
 
     # Add Sequential References - these are test functions that call other test functions sequentially
     # The entry point is the test in our blast radius, and it calls the referenced function
-    foreach ($seqRef in $sequentialRefs) {
+    foreach ($seqRef in $sequentialRefsHash.Values) {
         # Get the referenced function (the sequential test being called)
         $referencedFunc = Get-TestFunctionById -TestFunctionRefId $seqRef.ReferencedFunctionRefId
         if (-not $referencedFunc) { continue }
@@ -1133,7 +1098,7 @@ function Show-IndirectReferences {
     $sortedFileRefIds = $fileGroups.Keys | Sort-Object
     $currentFileIndex = 0
 
-    Write-Host " Blast Radius Analysis:" -ForegroundColor Cyan
+    Write-Host " Blast Radius Analysis:" -ForegroundColor $ItemColor
     Write-Separator
     Write-Host ""
 
@@ -1165,20 +1130,20 @@ function Show-IndirectReferences {
         }
 
         # File header
-        Write-Host " File: " -ForegroundColor $InfoColor -NoNewline
-        Write-Host "./$filePath" -ForegroundColor $BaseColor
+        Write-HostRGB " File: " $labelColor -NoNewline
+        Write-HostRGB "./$filePath" $textColor
         if ($templateRefs.Count -gt 0) {
             $templateLabel = if ($templateRefs.Count -eq 1) { "Test Step Configuration Function Reference" } else { "Test Step Configuration Function References" }
-            Write-Host "   $($templateRefs.Count) " -ForegroundColor $NumberColor -NoNewline
+            Write-HostRGB "   $($templateRefs.Count) " $numberColor -NoNewline
             # Only use -NoNewline if there are also sequential refs (so we can add comma)
             if ($sequentialRefs.Count -gt 0) {
-                Write-Host "$templateLabel" -ForegroundColor $InfoColor -NoNewline
+                Write-HostRGB "$templateLabel" $labelColor -NoNewline
             } else {
-                Write-Host "$templateLabel" -ForegroundColor $InfoColor
+                Write-HostRGB "$templateLabel" $labelColor
             }
         }
         if ($templateRefs.Count -gt 0 -and $sequentialRefs.Count -gt 0) {
-            Write-Host ", " -ForegroundColor $BaseColor -NoNewline
+            Write-HostRGB ", " $textColor -NoNewline
         }
         if ($sequentialRefs.Count -gt 0) {
             # Add indent if this is the first line (no template refs)
@@ -1186,231 +1151,30 @@ function Show-IndirectReferences {
                 Write-Host "   " -NoNewline
             }
             $sequentialLabel = if ($sequentialRefs.Count -eq 1) { "Sequential Key Reference" } else { "Sequential Key References" }
-            Write-Host "$($sequentialRefs.Count) " -ForegroundColor $NumberColor -NoNewline
-            Write-Host "$sequentialLabel" -ForegroundColor $InfoColor
+            Write-HostRGB "$($sequentialRefs.Count) " $numberColor -NoNewline
+            Write-HostRGB "$sequentialLabel" $labelColor
         }
 
         if ($refs.Count -gt 0) {
             # Display template references first (if any)
             if ($templateRefs.Count -gt 0) {
-                Show-TemplateFunctionDependencies -TemplateRefs $templateRefs -NumberColor $NumberColor -ItemColor $ItemColor
+                Show-TemplateFunctionDependencies -TemplateRefs $templateRefs -Colors $colors -NumberColor $NumberColor -ItemColor $ItemColor
             }
 
             # Display sequential references (if any)
             if ($sequentialRefs.Count -gt 0) {
-                Show-SequentialCallChain -SequentialRefs $sequentialRefs -ItemColor $ItemColor
+                Show-SequentialCallChain -SequentialRefs $sequentialRefs -Colors $colors -ItemColor $ItemColor
             }
         }
     }
 
     Write-Host ""
     Write-Separator
-    Write-Host " End of Blast Radius Analysis" -ForegroundColor Cyan
+    Write-HostRGB " End of Blast Radius Analysis" $headerColor
     Write-Separator
-}
-
-function Show-SequentialReferences {
-    <#
-    .SYNOPSIS
-    Display all sequential test dependencies from the database
-
-    .PARAMETER NumberColor
-    Color for numbers in output
-
-    .PARAMETER ItemColor
-    Color for item types in output
-
-    .PARAMETER BaseColor
-    Color for base text in output
-
-    .PARAMETER InfoColor
-    Color for info prefix in output
-    #>
-    param(
-        [Parameter(Mandatory = $false)]
-        [string]$NumberColor = "Yellow",
-
-        [Parameter(Mandatory = $false)]
-        [string]$ItemColor = "Cyan",
-
-        [Parameter(Mandatory = $false)]
-        [string]$BaseColor = "Gray",
-
-        [Parameter(Mandatory = $false)]
-        [string]$InfoColor = "Cyan"
-    )
-
-    Write-Host ""
-    Write-Separator
-    Write-Host "  SEQUENTIAL TEST DEPENDENCIES ANALYSIS" -ForegroundColor $ItemColor
-    Write-Separator
-    Write-Host ""
-
-    $sequentialRefs = Get-SequentialReferences
-
-    if ($sequentialRefs.Count -eq 0) {
-        Show-PhaseMessageHighlight -Message "No Sequential References Found In Database" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $BaseColor -InfoColor $InfoColor
-        return
-    }
-
-    Show-PhaseMessageMultiHighlight -Message "Found $($sequentialRefs.Count) Sequential Test Dependencies" -Highlights @(
-        @{ Text = "$($sequentialRefs.Count)"; Color = $NumberColor }
-        @{ Text = "Sequential"; Color = $ItemColor }
-    ) -BaseColor $BaseColor -InfoColor $InfoColor
-    Write-Host ""
-
-    # Group by sequential group
-    $groupedBySequence = $sequentialRefs | Group-Object -Property SequentialGroup
-    $totalGroups = $groupedBySequence.Count
-    $currentGroupIndex = 0
-
-    foreach ($group in $groupedBySequence) {
-        $currentGroupIndex++
-        $sequenceGroup = $group.Name
-        $count = $group.Count
-
-        Write-Host "  Sequential Group: " -ForegroundColor $ItemColor -NoNewline
-        Write-Host "$sequenceGroup " -ForegroundColor White -NoNewline
-        Write-Host "($count dependencies)" -ForegroundColor $NumberColor
-        Write-Host ""
-
-        foreach ($ref in $group.Group | Sort-Object SequentialKey) {
-            # Get entry point function
-            $entryFunc = Get-TestFunctionById -TestFunctionRefId $ref.EntryPointFunctionRefId
-            # Get referenced function
-            $refFunc = Get-TestFunctionById -TestFunctionRefId $ref.ReferencedFunctionRefId
-
-            if ($entryFunc -and $refFunc) {
-                Write-Host "    " -NoNewline
-                Write-Host "$($entryFunc.FunctionName)" -ForegroundColor $NumberColor -NoNewline
-                Write-Host " -> " -ForegroundColor $BaseColor -NoNewline
-                Write-Host "$($refFunc.FunctionName)" -ForegroundColor White
-            }
-        }
-
-        # Only print blank line if not the last group
-        if ($currentGroupIndex -lt $totalGroups) {
-            Write-Host ""
-        }
-    }
-}
-
-function Show-CrossFileReferences {
-    <#
-    .SYNOPSIS
-    Display cross-file struct references from the database
-
-    .PARAMETER NumberColor
-    Color for numbers in output
-
-    .PARAMETER ItemColor
-    Color for item types in output
-
-    .PARAMETER BaseColor
-    Color for base text in output
-
-    .PARAMETER InfoColor
-    Color for info prefix in output
-    #>
-    param(
-        [Parameter(Mandatory = $false)]
-        [string]$NumberColor = "Yellow",
-
-        [Parameter(Mandatory = $false)]
-        [string]$ItemColor = "Cyan",
-
-        [Parameter(Mandatory = $false)]
-        [string]$BaseColor = "Gray",
-
-        [Parameter(Mandatory = $false)]
-        [string]$InfoColor = "Cyan"
-    )
-
-    Write-Host ""
-    Write-Separator
-    Write-Host "  CROSS-FILE STRUCT REFERENCES ANALYSIS" -ForegroundColor $ItemColor
-    Write-Separator
-    Write-Host ""
-
-    # Get all test function steps with CROSS_FILE reference type
-    $crossFileTypeId = Get-ReferenceTypeId -ReferenceTypeName "CROSS_FILE"
-    $crossFileSteps = Get-TestFunctionStepsByReferenceType -ReferenceTypeId $crossFileTypeId
-
-    if ($crossFileSteps.Count -eq 0) {
-        Show-PhaseMessageHighlight -Message "No Cross-File References Found In Database" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $BaseColor -InfoColor $InfoColor
-        return
-    }
-
-    Show-PhaseMessageMultiHighlight -Message "Found $($crossFileSteps.Count) Cross-File Struct References" -Highlights @(
-        @{ Text = "$($crossFileSteps.Count)"; Color = $NumberColor }
-        @{ Text = "Cross-File"; Color = $ItemColor }
-    ) -BaseColor $BaseColor -InfoColor $InfoColor
-    Write-Host ""
-
-    # Build file-based grouping
-    $fileGroups = @{}
-    foreach ($step in $crossFileSteps) {
-        $testFunc = Get-TestFunctionById -TestFunctionRefId $step.TestFunctionRefId
-        if ($testFunc) {
-            $fileRefId = $testFunc.FileRefId
-            if (-not $fileGroups.ContainsKey($fileRefId)) {
-                $fileGroups[$fileRefId] = @()
-            }
-            $fileGroups[$fileRefId] += @{
-                TestFunc = $testFunc
-                Step     = $step
-            }
-        }
-    }
-
-    # Display grouped by file
-    $sortedFileRefIds = $fileGroups.Keys | Sort-Object
-    $totalFiles = $sortedFileRefIds.Count
-    $currentFileIndex = 0
-
-    foreach ($fileRefId in $sortedFileRefIds) {
-        $currentFileIndex++
-        $refs = $fileGroups[$fileRefId]
-        $filePath = Get-FilePathByRefId -FileRefId $fileRefId
-
-        Write-Host "  File: " -ForegroundColor $ItemColor -NoNewline
-        Write-Host "$filePath " -ForegroundColor Magenta -NoNewline
-        Write-Host "($($refs.Count) cross-file references)" -ForegroundColor $NumberColor
-
-        foreach ($refInfo in ($refs | Sort-Object { $_.TestFunc.FunctionName })) {
-            Write-Host "    Test: " -ForegroundColor $ItemColor -NoNewline
-            Write-Host "$($refInfo.TestFunc.FunctionName)" -ForegroundColor White
-
-            if ($refInfo.Step.StructRefId) {
-                $struct = Get-StructById -StructRefId $refInfo.Step.StructRefId
-                if ($struct) {
-                    $structFilePath = Get-FilePathByRefId -FileRefId $struct.FileRefId
-
-                    Write-Host "      Struct: " -ForegroundColor $BaseColor -NoNewline
-                    Write-Host "$($struct.StructName)" -ForegroundColor $NumberColor -NoNewline
-                    Write-Host " (from $structFilePath)" -ForegroundColor $BaseColor
-                }
-            }
-
-            if ($refInfo.Step.ConfigTemplate) {
-                $template = $refInfo.Step.ConfigTemplate.Trim()
-                if ($template.Length -gt 80) {
-                    $template = $template.Substring(0, 77) + "..."
-                }
-                Write-Host "      Template: " -ForegroundColor $BaseColor -NoNewline
-                Write-Host "$template" -ForegroundColor DarkGray
-            }
-        }
-
-        # Only print blank line if not the last file
-        if ($currentFileIndex -lt $totalFiles) {
-            Write-Host ""
-        }
-    }
 }
 
 Export-ModuleMember -Function @(
-    'Show-DatabaseStatistics',
     'Show-DirectReferences',
     'Show-IndirectReferences'
 )

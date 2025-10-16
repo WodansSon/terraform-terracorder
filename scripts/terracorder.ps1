@@ -153,9 +153,6 @@ if ($DatabaseDirectory) {
         exit 1
     }
 
-    # If no query option specified, default to showing statistics only
-    $ShowStatisticsOnly = -not ($ShowDirectReferences -or $ShowIndirectReferences)
-
 } elseif ($ResourceName -and $RepositoryDirectory) {
     # Discovery Mode
     $IsDiscoveryMode = $true
@@ -409,22 +406,25 @@ try {
 
     if (-not $IsDiscoveryMode) {
         #region DATABASE MODE
+        # Check if at least one query flag is specified
+        if (-not ($ShowDirectReferences -or $ShowIndirectReferences)) {
+            Write-Host ""
+            Write-Host "ERROR: " -ForegroundColor Red -NoNewline
+            Write-Host "Database Mode requires at least one query option (-ShowDirectReferences or -ShowIndirectReferences)" -ForegroundColor Yellow
+            Show-ComprehensiveHelp
+            exit 1
+        }
+
         # Import database from CSV files
-            Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor | Out-Null
+        Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor | Out-Null
 
         # Execute requested query operations
-        if ($ShowStatisticsOnly) {
-            # Default behavior: Show database statistics and available options
-            Show-DatabaseStatistics -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        } else {
-            # Show individual reference types if requested
-            if ($ShowDirectReferences) {
-                Show-DirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            }
+        if ($ShowDirectReferences) {
+            Show-DirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        }
 
-            if ($ShowIndirectReferences) {
-                Show-IndirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            }
+        if ($ShowIndirectReferences) {
+            Show-IndirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
         }
 
         # Calculate total execution time

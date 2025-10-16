@@ -36,7 +36,6 @@ function Get-VSCodeSyntaxColors {
         Comment           = "#6A9955"  # Green - Comments
         FunctionHighlight = "#DCDCAA"  # Gold - Function names, methods, custom literals
         Function          = "#CCB176"  # Dark Gold - Function names, methods, custom literals
-        VariableHighlight = "#9CDCFE"  # Light blue - Variables, parameters, properties, format specifiers
         Variable          = "#277378"  # Dark Cyan - Variables, parameters, properties, format specifiers
         VariableBracket   = "#1F1FA8"  # Dark blue - Variable interpolation brackets (${...})
         Constant          = "#4FC1FF"  # Bright blue - Constants, enum members

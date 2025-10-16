@@ -865,6 +865,14 @@ function Get-AllTestFunctionSteps {
     return $script:TestSteps.Values
 }
 
+function Get-TestStepsHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the TestSteps hash table for performance-critical operations
+    #>
+    return $script:TestSteps
+}
+
 function Get-TestFunctionStepsByReferenceType {
     <#
     .SYNOPSIS
@@ -1350,8 +1358,32 @@ function Get-SequentialReferences {
     return $script:SequentialReferences.Values
 }
 
+function Get-SequentialReferencesHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the SequentialReferences hash table for performance-critical operations
+    #>
+    return $script:SequentialReferences
+}
+
+function Get-IndirectConfigReferencesHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the IndirectConfigReferences hash table for performance-critical operations
+    #>
+    return $script:IndirectConfigReferences
+}
+
 function Get-Structs {
     return $script:Structs.Values  # Renamed table
+}
+
+function Get-StructsHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the Structs hash table for performance-critical operations
+    #>
+    return $script:Structs
 }
 
 function Get-StructById {
@@ -1407,6 +1439,14 @@ function Get-TemplateReferences {
     Returns all template reference records that link test functions to their template method calls
     #>
     return $script:TemplateReferences.Values
+}
+
+function Get-TemplateReferencesHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the TemplateReferences hash table for performance-critical operations
+    #>
+    return $script:TemplateReferences
 }
 
 function Get-Files {
@@ -1508,6 +1548,14 @@ function Get-Services {
     return $script:Services.Values
 }
 
+function Get-ServicesHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the Services hash table for performance-critical operations
+    #>
+    return $script:Services
+}
+
 function Get-ServiceRefIdByFilePath {
     <#
     .SYNOPSIS
@@ -1540,8 +1588,24 @@ function Get-TemplateFunctions {  # Renamed from Get-TestConfiguration
     return $script:TemplateFunctions.Values  # Renamed table
 }
 
+function Get-TemplateFunctionsHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the TemplateFunctions hash table for performance-critical operations
+    #>
+    return $script:TemplateFunctions
+}
+
 function Get-TemplateCallChains {
     return $script:TemplateCallChain.Values
+}
+
+function Get-TemplateCallChainsHashTable {
+    <#
+    .SYNOPSIS
+    Get direct access to the TemplateCallChain hash table for performance-critical operations
+    #>
+    return $script:TemplateCallChain
 }
 
 function Get-ExportDirectory {
@@ -2559,7 +2623,17 @@ Export-ModuleMember -Function @(
     'Get-StructsByFileRefId',
     'Get-ReferenceTypeName',
     'Get-ReferenceTypeId',
-    'Get-FunctionVisibilityType'
+    'Get-FunctionVisibilityType',
+
+    # Performance-optimized hash table accessors
+    'Get-TestStepsHashTable',
+    'Get-TemplateFunctionsHashTable',
+    'Get-TemplateCallChainsHashTable',
+    'Get-TemplateReferencesHashTable',
+    'Get-StructsHashTable',
+    'Get-ServicesHashTable',
+    'Get-SequentialReferencesHashTable',
+    'Get-IndirectConfigReferencesHashTable'
 ) -Variable @(
     'ReferenceTypes'
 )
