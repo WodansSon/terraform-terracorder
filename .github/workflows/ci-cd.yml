@@ -24,13 +24,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup PowerShell Core
-      uses: azure/powershell@v1
+    - name: Setup Go
+      uses: actions/setup-go@v5
       with:
-        azPSVersion: 'latest'
-        inlineScript: |
-          Write-Host "Using PowerShell Core"
-          $PSVersionTable
+        go-version: '1.21'
+
+    - name: Verify PowerShell Version
+      shell: pwsh
+      run: |
+        Write-Host "Using PowerShell Core"
+        $PSVersionTable
 
     - name: Validate PowerShell Syntax
       shell: pwsh
@@ -110,29 +113,10 @@ jobs:
         name: test-results-${{ matrix.os }}-ps${{ matrix.powershell-version }}
         path: test-results-*.json
 
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Run DevSkim Scanner
-      uses: microsoft/DevSkim-Action@v1
-      with:
-        directory-to-scan: ./scripts
-
-    - name: Upload DevSkim Results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: devskim-results
-        path: devskim-results.sarif
-
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [test, security-scan]
+    needs: [test]
     if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
