@@ -61,7 +61,7 @@ The `go_test_commands.txt` file contains **ALL test functions** discovered throu
 - **Purpose**: Fast querying of previously analyzed data
 - **Process**: Load CSV files into in-memory database, execute queries
 - **Input**: CSV files from previous Discovery Mode run
-- **Operations**: ShowDirectReferences, ShowIndirectReferences, ShowAllReferences, ShowTestSequence
+- **Operations**: ShowDirectReferences, ShowIndirectReferences
 - **Duration**: Seconds (database load + query execution)
 - **Use Case**: Analysis, reporting, exploration without re-scanning repository
 - **Note**: Database Mode is read-only, does not regenerate CSV files or `go_test_commands.txt`

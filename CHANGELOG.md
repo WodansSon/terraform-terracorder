@@ -97,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `modules/ProcessingCore.psm1` - core regex processing functions
   - `modules/RelationalQueries.psm1` - legacy relational query functions (310 lines)
   - All functionality replaced by AST semantic analysis (100% accurate vs ~85% with regex)
+- **Database Mode Parameters**: Removed unhelpful query options
+  - `-ShowAllReferences` - Removed as it provided no additional value over individual reference type displays
 
 ### Fixed
 - **Documentation Synchronization**: Updated all documentation files
@@ -142,7 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CSV export list updated to 14 tables
   - All code examples updated to reflect current architecture
 
-## [2.0.6]
+## [2.0.6] - 2025-10-06
 
 ### Added
 - **Database Mode**: New read-only database query mode for analyzing previously discovered data without re-running discovery

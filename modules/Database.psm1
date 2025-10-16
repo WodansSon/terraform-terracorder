@@ -1600,6 +1600,7 @@ function Export-DatabaseToCSV {
     function Export-TableWithHeaders {
         param(
             [Parameter(Mandatory = $true)]
+            [AllowNull()]
             [AllowEmptyCollection()]
             [object[]]$Data,
             [Parameter(Mandatory = $true)]
@@ -1607,6 +1608,11 @@ function Export-DatabaseToCSV {
             [Parameter(Mandatory = $true)]
             [hashtable]$EmptyRowTemplate
         )
+
+        # Ensure $Data is never null
+        if ($null -eq $Data) {
+            $Data = @()
+        }
 
         if ($Data -and $Data.Count -gt 0) {
             # Table has data, export normally
@@ -1739,51 +1745,78 @@ function Export-DatabaseToCSV {
 
         # Export each table to CSV with headers
         # Ensure we always pass arrays, even if empty (check both hashtable and .Values)
-        $resourceRegistrationsData = if ($script:ResourceRegistrations -and $script:ResourceRegistrations.Values) { @($script:ResourceRegistrations.Values) } else { @() }
-        $resourcesData = if ($script:Resources -and $script:Resources.Values) { @($script:Resources.Values) } else { @() }
+        $resourceRegistrationsData = @()
+        if ($script:ResourceRegistrations.Values.Count -gt 0) {
+            $resourceRegistrationsData = @($script:ResourceRegistrations.Values)
+        }
+
+        $resourcesData = @()
+        if ($script:Resources.Values.Count -gt 0) {
+            $resourcesData = @($script:Resources.Values)
+        }
 
         Export-TableWithHeaders -Data $resourceRegistrationsData -FilePath (Join-Path $exportDir "ResourceRegistrations.csv") -EmptyRowTemplate $emptyTemplates.ResourceRegistrations
         Export-TableWithHeaders -Data $resourcesData -FilePath (Join-Path $exportDir "Resources.csv") -EmptyRowTemplate $emptyTemplates.Resources
 
         # Add ResourceRefId = 1 to records during export (cold path) to avoid overhead during record creation (hot path)
-        $servicesWithResourceRef = if ($script:Services -and $script:Services.Values) {
-            @(@($script:Services.Values) | ForEach-Object {
+        $servicesWithResourceRef = @()
+        if ($script:Services -and $script:Services.Values) {
+            $temp = @($script:Services.Values) | ForEach-Object {
                 $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-            })
-        } else { @() }
+            }
+            if ($temp) { $servicesWithResourceRef = @($temp) }
+        }
         Export-TableWithHeaders -Data $servicesWithResourceRef -FilePath (Join-Path $exportDir "Services.csv") -EmptyRowTemplate $emptyTemplates.Services
 
-        $filesData = if ($script:Files -and $script:Files.Values) { @($script:Files.Values) } else { @() }
+        $filesData = @()
+        if ($script:Files.Values.Count -gt 0) {
+            $filesData = @($script:Files.Values)
+        }
         Export-TableWithHeaders -Data $filesData -FilePath (Join-Path $exportDir "Files.csv") -EmptyRowTemplate $emptyTemplates.Files
 
-        $structsWithResourceRef = if ($script:Structs -and $script:Structs.Values) {
-            @(@($script:Structs.Values) | ForEach-Object {
+        $structsWithResourceRef = @()
+        if ($script:Structs -and $script:Structs.Values) {
+            $temp = @($script:Structs.Values) | ForEach-Object {
                 $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-            })
-        } else { @() }
+            }
+            if ($temp) { $structsWithResourceRef = @($temp) }
+        }
         Export-TableWithHeaders -Data $structsWithResourceRef -FilePath (Join-Path $exportDir "Structs.csv") -EmptyRowTemplate $emptyTemplates.Structs
 
-        $testFunctionsWithResourceRef = if ($script:TestFunctions -and $script:TestFunctions.Values) {
-            @(@($script:TestFunctions.Values) | ForEach-Object {
+        $testFunctionsWithResourceRef = @()
+        if ($script:TestFunctions -and $script:TestFunctions.Values) {
+            $temp = @($script:TestFunctions.Values) | ForEach-Object {
                 $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-            })
-        } else { @() }
+            }
+            if ($temp) { $testFunctionsWithResourceRef = @($temp) }
+        }
         Export-TableWithHeaders -Data $testFunctionsWithResourceRef -FilePath (Join-Path $exportDir "TestFunctions.csv") -EmptyRowTemplate $emptyTemplates.TestFunctions
 
-        $testStepsData = if ($script:TestSteps -and $script:TestSteps.Values) { @($script:TestSteps.Values) } else { @() }
+        $testStepsData = @()
+        if ($script:TestSteps.Values.Count -gt 0) {
+            $testStepsData = @($script:TestSteps.Values)
+        }
         Export-TableWithHeaders -Data $testStepsData -FilePath (Join-Path $exportDir "TestFunctionSteps.csv") -EmptyRowTemplate $emptyTemplates.TestSteps
 
-        $directResourceReferencesData = if ($script:DirectResourceReferences -and $script:DirectResourceReferences.Values) { @($script:DirectResourceReferences.Values) } else { @() }
+        $directResourceReferencesData = @()
+        if ($script:DirectResourceReferences.Values.Count -gt 0) {
+            $directResourceReferencesData = @($script:DirectResourceReferences.Values)
+        }
         Export-TableWithHeaders -Data $directResourceReferencesData -FilePath (Join-Path $exportDir "DirectResourceReferences.csv") -EmptyRowTemplate $emptyTemplates.DirectResourceReferences
 
-        $indirectConfigReferencesData = if ($script:IndirectConfigReferences -and $script:IndirectConfigReferences.Values) { @($script:IndirectConfigReferences.Values) } else { @() }
+        $indirectConfigReferencesData = @()
+        if ($script:IndirectConfigReferences.Values.Count -gt 0) {
+            $indirectConfigReferencesData = @($script:IndirectConfigReferences.Values)
+        }
         Export-TableWithHeaders -Data $indirectConfigReferencesData -FilePath (Join-Path $exportDir "IndirectConfigReferences.csv") -EmptyRowTemplate $emptyTemplates.IndirectConfigReferences
 
-        $templateFunctionsWithResourceRef = if ($script:TemplateFunctions -and $script:TemplateFunctions.Values) {
-            @(@($script:TemplateFunctions.Values) | ForEach-Object {
+        $templateFunctionsWithResourceRef = @()
+        if ($script:TemplateFunctions -and $script:TemplateFunctions.Values) {
+            $temp = @($script:TemplateFunctions.Values) | ForEach-Object {
                 $_ | Add-Member -NotePropertyName "ResourceRefId" -NotePropertyValue 1 -PassThru -Force
-            })
-        } else { @() }
+            }
+            if ($temp) { $templateFunctionsWithResourceRef = @($temp) }
+        }
         Export-TableWithHeaders -Data $templateFunctionsWithResourceRef -FilePath (Join-Path $exportDir "TemplateFunctions.csv") -EmptyRowTemplate $emptyTemplates.TemplateFunctions
 
         $sequentialReferencesData = @()

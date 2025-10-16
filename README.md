@@ -113,11 +113,8 @@ cd terracorder
 # Show indirect references with visual tree diagrams (includes templates and sequential patterns)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowIndirectReferences
 
-# Show all reference types combined (complete blast radius analysis)
-.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowAllReferences
-
 # Use custom database location
-.\scripts\terracorder.ps1 -DatabaseDirectory "C:\analysis\subnet" -ShowAllReferences
+.\scripts\terracorder.ps1 -DatabaseDirectory "C:\analysis\subnet" -ShowIndirectReferences
 ```
 
 ### Visual Blast Radius Trees
@@ -276,7 +273,6 @@ Database Mode loads previously exported CSV files for instant analysis:
   - Sequential test entry points organized by groups and keys
   - Color-coded tree structure with professional Unicode box-drawing
   - External reference markers for cross-resource dependencies
-- **ShowAllReferences**: Display complete blast radius analysis (Direct + Indirect) with full visual output
 
 #### Benefits
 - **Speed**: Query operations complete in seconds vs minutes for Discovery Mode
@@ -502,7 +498,6 @@ go_test_commands.txt                 - Generated test commands
 | `-DatabaseDirectory` | **Yes** | Directory containing CSV database files | - | `"output"` or `"C:\analysis\output"` |
 | `-ShowDirectReferences` | No | Display direct resource references | Shows available options | Switch parameter |
 | `-ShowIndirectReferences` | No | Display indirect references (templates + sequential) | Shows available options | Switch parameter |
-| `-ShowAllReferences` | No | Display all reference types (complete analysis) | Shows available options | Switch parameter |
 
 **Note**: If no Show parameter is specified, Database Mode displays available analysis options and examples.
 

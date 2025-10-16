@@ -194,8 +194,12 @@ Write-Separator
 #endregion
 
 #region Mode Execution
-# Hide cursor to reduce flashing during progress updates
-[Console]::CursorVisible = $false
+# Hide cursor to reduce flashing during progress updates (skip if in background job)
+try {
+    [Console]::CursorVisible = $false
+} catch {
+    # Ignore - likely running in background job where console is not available
+}
 
 # Initialize timing
 $scriptStartTime = Get-Date
@@ -443,7 +447,11 @@ try {
     Write-Host $_.ScriptStackTrace -ForegroundColor Gray
     throw
 } finally {
-    # Always restore cursor visibility, even if script fails
-    [Console]::CursorVisible = $true
+    # Always restore cursor visibility, even if script fails (skip if in background job)
+    try {
+        [Console]::CursorVisible = $true
+    } catch {
+        # Ignore - likely running in background job where console is not available
+    }
 }
 #endregion

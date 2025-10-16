@@ -795,7 +795,7 @@ function Show-MutuallyExclusiveModesError {
     Write-Host "  Discovery: " -ForegroundColor Cyan -NoNewline
     Write-Host ".\terracorder.ps1 -ResourceName 'azurerm_subnet' -RepositoryDirectory 'C:\repo'" -ForegroundColor White
     Write-Host "  Database:  " -ForegroundColor Cyan -NoNewline
-    Write-Host ".\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowAllReferences" -ForegroundColor White
+    Write-Host ".\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowIndirectReferences" -ForegroundColor White
     Write-Host ""
 }
 
@@ -848,11 +848,11 @@ function Show-MissingParametersError {
     Write-Host "     Required: " -ForegroundColor Cyan -NoNewline
     Write-Host "-DatabaseDirectory <path>" -ForegroundColor White
     Write-Host "     Options:  " -ForegroundColor Cyan -NoNewline
-    Write-Host "-ShowDirectReferences, -ShowIndirectReferences, -ShowAllReferences, etc." -ForegroundColor White
+    Write-Host "-ShowDirectReferences, -ShowIndirectReferences" -ForegroundColor White
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Cyan
     Write-Host "  .\terracorder.ps1 -ResourceName 'azurerm_subnet' -RepositoryDirectory 'C:\terraform-provider-azurerm'" -ForegroundColor White
-    Write-Host "  .\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowAllReferences" -ForegroundColor White
+    Write-Host "  .\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowIndirectReferences" -ForegroundColor White
     Write-Host ""
 }
 
@@ -895,16 +895,10 @@ function Show-ComprehensiveHelp {
     Write-Host " (Query Existing Data):"
     Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
-    Write-Host "                    # Show available options"
-    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
-    Write-Host '".\output"' -ForegroundColor Green -NoNewline
     Write-Host " -ShowDirectReferences"
     Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
     Write-Host " -ShowIndirectReferences"
-    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
-    Write-Host '".\output"' -ForegroundColor Green -NoNewline
-    Write-Host " -ShowAllReferences"
     Write-Host ""
 
     Write-Host "PARAMETERS:" -ForegroundColor Yellow
@@ -918,7 +912,6 @@ function Show-ComprehensiveHelp {
     Write-Host "    -DatabaseDirectory      Path to existing CSV database"
     Write-Host "    -ShowDirectReferences   Display direct resource/data declarations"
     Write-Host "    -ShowIndirectReferences Display template dependencies and sequential chains"
-    Write-Host "    -ShowAllReferences      Display complete analysis (Direct + Indirect)"
     Write-Host "    -ExportDirectory        CSV database directory (default: ../output)"
     Write-Host ""
     Write-Host "  General:" -ForegroundColor Cyan
@@ -956,10 +949,10 @@ function Show-ComprehensiveHelp {
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
     Write-Host " -ShowDirectReferences"
     Write-Host ""
-    Write-Host "  # Query existing database - all references"
+    Write-Host "  # Query existing database - indirect references"
     Write-Host "  .\terracorder.ps1 -DatabaseDirectory " -NoNewline
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
-    Write-Host " -ShowAllReferences"
+    Write-Host " -ShowIndirectReferences"
     Write-Host ""
 }
 
