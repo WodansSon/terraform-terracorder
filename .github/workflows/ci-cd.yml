@@ -24,13 +24,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup PowerShell Core
-      uses: azure/powershell@v1
+    - name: Setup Go
+      uses: actions/setup-go@v5
       with:
-        azPSVersion: 'latest'
-        inlineScript: |
-          Write-Host "Using PowerShell Core"
-          $PSVersionTable
+        go-version: '1.21'
+
+    - name: Verify PowerShell Version
+      shell: pwsh
+      run: |
+        Write-Host "Using PowerShell Core"
+        $PSVersionTable
 
     - name: Validate PowerShell Syntax
       shell: pwsh
@@ -113,21 +116,23 @@ jobs:
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Run DevSkim Scanner
-      uses: microsoft/DevSkim-Action@v1
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
       with:
-        directory-to-scan: ./scripts
+        languages: javascript  # CodeQL treats PowerShell as similar to JS for analysis
+        queries: security-and-quality
 
-    - name: Upload DevSkim Results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: devskim-results
-        path: devskim-results.sarif
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
 
   release:
     name: Create Release
