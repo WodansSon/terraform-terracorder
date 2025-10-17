@@ -84,6 +84,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ResourceRegistrations count now included
   - TemplateCallChain count now included
   - TotalRecords calculation updated to include all tables
+- **Blast Radius Display UX**: Simplified reference type suffix display for better readability
+  - Removed redundant `CROSS_FILE` and `SELF_CONTAINED` suffixes (visual notation already conveys this)
+  - Visual indicators clearly show structure: `calls` for cross-file references, line numbers for same-file references
+  - Only display architecturally meaningful suffixes: `// EXTERNAL_REFERENCE` and `// CROSS_SERVICE`
+  - Changed suffix format from colon-style to comment-style using `//` for intuitive developer understanding
+  - Changed cross-file indicator from arrow `->` to `calls` for clearer semantics (e.g., `r.method calls r.template`)
+  - Added "calls" verb in cross-service annotations (e.g., `// CROSS_SERVICE: \`vmware\` calls \`netapp\``)
+  - Graceful fallback: displays "UNKNOWN" for service names when information unavailable
+  - All suffixes displayed in `Comment` color for consistent metadata appearance
+- **Code Refactoring**: Simplified reference type handling in blast radius display
+  - Replaced string concatenation with direct ID-based comparisons for better performance
+  - Data preparation now passes `FileReferenceTypeId` and `ServiceImpactTypeId` as integers instead of combined strings
+  - Display logic uses direct ID comparison instead of string parsing
+  - Eliminates overhead from string building and parsing operations
 
 ### Removed
 - **Regex Processing Modules**: Removed 9 legacy regex-based processing modules after AST migration
@@ -251,33 +265,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Sequential reference processing details
   - External stub creation explanation
   - Referential integrity maintenance notes
-
-### Added
-- **Repository Path Support**: New `-RepositoryPath` parameter allows specifying the Terraform provider repository location
-- **Auto-Detection**: Smart repository auto-detection searches current directory, script location, and parent directories
-- **Flexible Usage**: Can now run TerraCorder from anywhere, not just within the provider repository
-- **Enhanced Error Messages**: Improved error messages with helpful guidance when repository is not found
-
-### Changed
-- **Breaking**: Script now requires explicit repository path or must be run from within provider repository structure
-- **Improved**: Enhanced help documentation with repository path examples
-- **Better**: More robust path resolution and validation
-
-### Added (Initial Release)
-- Initial release of TerraCorder
-- Comprehensive Terraform test dependency scanning
-- Support for direct resource usage detection
-- Template reference analysis for indirect dependencies
-- Multiple output formats (list, JSON, CSV, summary)
-- Cross-platform compatibility (Windows, Linux, macOS)
-- Progress visualization with adaptive console width
-- Flexible filtering options
-
-### Security
-- Input validation for all parameters
-- Path validation to prevent directory traversal
-- Read-only file system operations
-- Secure error handling
 
 ## [1.0.0] - 2025-09-08
 

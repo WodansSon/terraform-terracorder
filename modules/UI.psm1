@@ -64,6 +64,10 @@ function Get-VSCodeSyntaxColors {
         BracketLevel1   = "#FFD700"  # Gold - Outermost brackets (Level 1)
         BracketLevel2   = "#DA70D6"  # Orchid/Pink - Middle brackets (Level 2)
         BracketLevel3   = "#179FFF"  # Bright blue - Innermost brackets (Level 3)
+
+        # Indirect References colors
+        CrossService      = "#fd935bff"  # Coral/salmon
+        ExternalReference = "#E74C3C"  # Hard red
     }
 }
 

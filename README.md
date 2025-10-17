@@ -7,6 +7,7 @@ A high-performance **AST-based semantic analysis tool** that identifies all test
 **Two powerful modes:** Discovery Mode for initial AST analysis and database building, and Database Mode for fast querying of previously analyzed data!
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?style=flat&logo=powershell&logoColor=white)](https://github.com/PowerShell/PowerShell)
+[![Go](https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev/)
 [![Terraform](https://img.shields.io/badge/Terraform-623CE4?style=flat&logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![Azure](https://img.shields.io/badge/Azure-0089D0?style=flat&logo=microsoft-azure&logoColor=white)](https://azure.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -19,7 +20,7 @@ A high-performance **AST-based semantic analysis tool** that identifies all test
 - **Relational Database Architecture**: Full normalized database with foreign key relationships tracking all test dependencies
 - **Single-Pass AST Processing**: Efficient Replicode extracts all metadata in one pass per file
 - **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns through AST call graph analysis
-- **Database Export**: Complete CSV exports of all 13 database tables for advanced analysis
+- **Database Export**: Complete CSV exports of all 14 database tables for advanced analysis
 - **Resource Ownership Tracking**: Master mapping of all Terraform resources to their owning Azure services
 - **Visual Progress Tracking**: Real-time progress with file-by-file scanning feedback during sequential discovery
 - **Smart Test Command Generation**: Automatically generates optimized `go test` commands by service
@@ -126,36 +127,50 @@ Database Mode includes **rich visual tree diagrams** that map complete dependenc
 
 #### Understanding Reference Type Labels
 
-When viewing indirect references, TerraCorder shows labels that indicate the **scope and complexity** of each dependency:
+When viewing indirect references, TerraCorder uses **visual notation and minimal suffixes** for intuitive understanding:
 
-- **SELF_CONTAINED**: The template function and the resource it references are in the **same file**
-  - Example: `r.basic() -> azurerm_subnet.test: SELF_CONTAINED`
-  - Simplest case: both the template and resource are co-located
-  - No cross-file dependencies
+**Visual Indicators:**
+- **Same file reference**: Shows line number only (e.g., `Config: r.basic`)
+  - Line number indicates internal reference within the same test file
+  - No arrow needed - simplest case
 
-- **CROSS_FILE**: The template function calls **another template** in a different file before reaching the resource
-  - Example: `r.complete() -> Struct{}.templateVM (chaosstudio -> containers): CROSS_FILE`
-  - Shows the service boundary: `(templateService -> resourceService)`
-  - Indicates a multi-hop dependency chain across files
-  - More complex: changes to intermediate templates may affect this reference
+- **Cross-file reference**: Shows `calls` notation (e.g., `Config: r.method calls r.template`)
+  - Indicates the template calls another template in a different file
+  - Clear semantic meaning: one function calls another
 
-- **CROSS_SERVICE**: The dependency crosses **Azure service boundaries**
-  - Example: `r.method() -> azurerm_subnet.test: CROSS_SERVICE`
-  - The test is in one service (e.g., "monitor") but references a resource owned by another service (e.g., "network")
-  - Important for understanding cross-team dependencies
-  - Often combined with CROSS_FILE: `CROSS_FILE; CROSS_SERVICE`
+- **Line numbers**: Function definitions show line numbers (e.g., `Function: 2276: testAccExample_basic`)
+  - Helps locate the exact function in source files
+  - Missing line numbers indicate external references
 
-- **EXTERNAL_REFERENCE**: The target function is defined **outside the current analysis scope**
-  - Example: `r.template() -> <external>: EXTERNAL_REFERENCE; CROSS_SERVICE`
-  - Common in sequential tests that reference functions from other resource test files
-  - Marked as `<external>` since the full definition isn't in the current database
-  - Still shows CROSS_SERVICE if it crosses service boundaries
+**Explicit Suffixes (Comment Style):**
 
-**Why This Matters:**
-- **SELF_CONTAINED** dependencies are safest to modify (isolated impact)
-- **CROSS_FILE** dependencies require checking intermediate templates
-- **CROSS_SERVICE** dependencies may require coordination with other teams
-- **EXTERNAL_REFERENCE** indicates you may need to analyze additional resources
+Only architecturally significant information is shown as comment-style suffixes:
+
+- **// EXTERNAL_REFERENCE**: Target function is **outside the current analysis scope**
+  - Example: `Config: r.template calls // EXTERNAL_REFERENCE`
+  - Common in sequential tests referencing functions from other resource test files
+  - Marked as external since the full definition isn't in the current database
+  - Indicates you may need to analyze additional resources
+
+- **// CROSS_SERVICE**: Dependency crosses **Azure service boundaries**
+  - Example: `Config: r.basic // CROSS_SERVICE: \`monitor\` calls \`network\``
+  - The test is in one service but references a resource owned by another service
+  - Shows which service calls which for clear cross-team visibility
+  - Important for understanding cross-team dependencies and coordination needs
+  - Can appear with same-file or cross-file references
+  - Gracefully shows "UNKNOWN" if service information unavailable
+
+**Why This Design:**
+- **Visual clarity**: Arrows and line numbers convey structure without redundant labels
+- **Focus on what matters**: Only show explicit labels for architecturally significant information
+- **Intuitive**: Comment-style `//` syntax is familiar to developers
+- **Scannable**: Easy to quickly identify cross-service dependencies (highest risk)
+
+**Impact Assessment:**
+- Same-file references are **safest** to modify (isolated, single file impact)
+- Cross-file references require **checking intermediate templates** (multi-file impact)
+- Cross-service references may require **coordination with other teams** (cross-boundary impact)
+- External references indicate you may need to **analyze additional resources** for complete picture
 
 ### Database Exports
 ```powershell
@@ -199,25 +214,25 @@ TerraCorder uses AST semantic analysis for comprehensive dependency detection:
 ### Example: `azurerm_resource_group` Analysis
 ```
 Phase 1: File Discovery               : 2,695 files found, 1,277 relevant in 4,826 ms
-Phase 2: AST Analysis & DB Import      : 8,473 functions, 26,771 refs in 47,927 ms
-Phase 3: CSV Export                    : 14 tables exported in 489 ms
+Phase 2: AST Analysis & DB Import     : 8,473 functions, 26,771 refs in 47,927 ms
+Phase 3: CSV Export                   : 14 tables exported in 489 ms
 
 Total Execution Time                  : 53.2 seconds
 ```
 
 ### Database Size: `azurerm_kubernetes_cluster`
 ```
-Services Table                        : 5 services
-Files Table                           : 22 files
-Structs Table                         : 16 structs
-TestFunctions Table                   : 322 test functions
-TestFunctionSteps Table               : 502 test steps
-TemplateFunctions Table               : 333 template functions
-TemplateReferences Table              : 501 template calls
-DirectResourceReferences Table        : 910 direct references
-IndirectConfigReferences Table        : 238 indirect references
-SequentialReferences Table            : 0 sequential links
-ReferenceTypes Table                  : 13 reference types
+Services Table                 : 5 services
+Files Table                    : 22 files
+Structs Table                  : 16 structs
+TestFunctions Table            : 322 test functions
+TestFunctionSteps Table        : 502 test steps
+TemplateFunctions Table        : 333 template functions
+TemplateReferences Table       : 501 template calls
+DirectResourceReferences Table : 910 direct references
+IndirectConfigReferences Table : 238 indirect references
+SequentialReferences Table     : 0 sequential links
+ReferenceTypes Table           : 13 reference types
 ```
 
 ## How It Works
@@ -252,7 +267,7 @@ TerraCorder uses a **streamlined 3-phase approach** with AST (Abstract Syntax Tr
 - Single-pass processing with real-time progress tracking
 
 #### Phase 3: CSV Export
-- Exports all 13 database tables to CSV files
+- Exports all 14 database tables to CSV files
 - Maintains proper column headers even for empty tables
 - Provides comprehensive dataset for analysis and reporting
 - Exports `go_test_commands.txt` file for CI/CD integration
@@ -444,14 +459,6 @@ Database Mode provides **rich visual tree diagrams** for dependency analysis:
        └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleDefinition_basic
 ```
 
-#### Tree Symbols Explained
-- `│` Vertical pipe: Continues the tree structure downward
-- `├` Tee connector: Branches to a sibling (more items follow)
-- `└` Corner connector: Last item in a group (no more siblings)
-- `┬` Tee-down connector: Parent with children below
-- `►` Right arrow: Points to the referenced item
-- `─` Horizontal line: Connects items at the same level
-
 #### Color Coding (Terminal ANSI Support Required)
 - **Entry Points**: Highlighted function names
 - **Sequential Groups**: Colored group names (e.g., "dataSource", "keys", "resource")
@@ -466,21 +473,21 @@ Database Mode provides **rich visual tree diagrams** for dependency analysis:
 
 ### CSV Export Files (in output directory)
 ```
-Resources.csv                        - Terraform resources being analyzed (with FK to ResourceRegistrations)
-ResourceRegistrations.csv            - Master mapping of ALL resources to owning services (~1,038 resources)
-Services.csv                         - All Azure services
-Files.csv                            - All test files
-Structs.csv                          - Test resource structs
-TestFunctions.csv                    - Test function records
-TestFunctionSteps.csv                - Individual test steps
-TemplateFunctions.csv                - Template methods
-TemplateReferences.csv               - Template method calls
-DirectResourceReferences.csv         - Direct resource usage
-IndirectConfigReferences.csv         - Template dependencies
-SequentialReferences.csv             - Sequential test links
-TemplateCallChain.csv                - Template-to-template function calls
-ReferenceTypes.csv                   - Reference type lookup
-go_test_commands.txt                 - Generated test commands
+Resources.csv                - Terraform resources being analyzed (with FK to ResourceRegistrations)
+ResourceRegistrations.csv    - Master mapping of ALL resources to owning services (~1,038 resources)
+Services.csv                 - All Azure services
+Files.csv                    - All test files
+Structs.csv                  - Test resource structs
+TestFunctions.csv            - Test function records
+TestFunctionSteps.csv        - Individual test steps
+TemplateFunctions.csv        - Template methods
+TemplateReferences.csv       - Template method calls
+DirectResourceReferences.csv - Direct resource usage
+IndirectConfigReferences.csv - Template dependencies
+SequentialReferences.csv     - Sequential test links
+TemplateCallChain.csv        - Template-to-template function calls
+ReferenceTypes.csv           - Reference type lookup
+go_test_commands.txt         - Generated test commands
 ```
 
 ## Parameters
@@ -520,6 +527,43 @@ Required:
 ```
 
 **Solution**: Install PowerShell Core 7.x from https://github.com/PowerShell/PowerShell
+
+### Go Version Issues
+
+TerraCorder requires **Go 1.21 or later** to build the Replicode AST analyzer. You'll see a clear error if Go is not installed or the version is too old:
+
+```
+ERROR: Go 1.21 or later is required to build the Replicode AST analyzer.
+
+Current environment:
+  Go not found in PATH
+
+Required:
+  Go Version: 1.21 or later
+  Installation: https://go.dev/doc/install
+
+The Replicode tool is required for AST-based semantic analysis.
+Please install Go and ensure it's available in your PATH.
+```
+
+Or if Go is too old:
+
+```
+ERROR: Go 1.21 or later is required to build the Replicode AST analyzer.
+
+Current environment:
+  Go Version: go1.20.5
+
+Required:
+  Go Version: 1.21 or later
+  Installation: https://go.dev/doc/install
+```
+
+**Solutions:**
+1. Install Go 1.21+ from https://go.dev/doc/install
+2. Verify installation: `go version` (should show 1.21 or higher)
+3. Ensure Go is in your PATH
+4. After installing Go, the Replicode tool will be automatically built on first run
 
 ### Repository Path Issues
 
