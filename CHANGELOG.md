@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2025-10-18
+
 ### Breaking Changes
 - **AST-Based Architecture**: Complete migration from regex pattern matching to Go AST (Abstract Syntax Tree) semantic analysis
   - **External Dependency**: Requires Go 1.21+ to build the AST `replicode` analyzer tool (`tools/replicode`)
