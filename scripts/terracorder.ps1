@@ -102,82 +102,25 @@ $Script:HighlightColor = "Cyan"    # For highlighted values
 $Script:InfoColor = "Cyan"         # For [INFO] prefix
 
 #region PowerShell Prerequisites Validation
-# Validate PowerShell prerequisites before any module imports
-Write-Host ""
-Write-Host "Validating PowerShell Prerequisites:" -ForegroundColor Yellow
-
-# Check PowerShell version
-$currentVersion = $PSVersionTable.PSVersion
-$currentEdition = $PSVersionTable.PSEdition
-$fullVersion = $currentVersion.ToString()
-
-Write-Host " PowerShell Edition  : " -ForegroundColor Cyan -NoNewline
-$editionColor = if ($currentEdition -eq 'Core') { 'Green' } else { 'Yellow' }
-Write-Host "$currentEdition" -ForegroundColor $editionColor
-
-Write-Host " PowerShell Version  : " -ForegroundColor Cyan -NoNewline
-$versionColor = if ($currentVersion.Major -ge 7) { 'Green' } else { 'Yellow' }
-Write-Host "$fullVersion" -ForegroundColor $versionColor
-
-# Calculate optimal thread count for parallel processing
-$Global:ThreadCount = [Math]::Min(8, [Math]::Max(2, [Environment]::ProcessorCount))
-$threadText = if ($Global:ThreadCount -eq 1) { "thread" } else { "threads" }
-
-
-# Check if requirements are met
-$meetsRequirements = ($currentEdition -eq 'Core') -and ($currentVersion.Major -ge 7)
-
-if ($meetsRequirements) {
-    Write-Host " Status              : " -ForegroundColor Cyan -NoNewline
-    Write-Host "Supported" -ForegroundColor Green
-    Write-Host " Threading           : " -ForegroundColor Cyan -NoNewline
-    Write-Host "$($Global:ThreadCount) $threadText" -ForegroundColor Green
-} else {
-    Write-Host " Status              : " -ForegroundColor Cyan -NoNewline
-    Write-Host "Unsupported" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "ERROR: " -ForegroundColor Cyan -NoNewline
-    Write-Host "PowerShell Core 7.0 or later required." -ForegroundColor Magenta
-    Write-Host ""
-    Write-Host "Current environment:" -ForegroundColor Yellow
-    Write-Host "  Edition: " -ForegroundColor Cyan -NoNewline
-    Write-Host "$currentEdition" -ForegroundColor Yellow
-    Write-Host "  Version: " -ForegroundColor Cyan -NoNewline
-    Write-Host "$fullVersion" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Required:" -ForegroundColor Yellow
-    Write-Host "  Edition: " -ForegroundColor Cyan -NoNewline
-    Write-Host "Core" -ForegroundColor Green
-    Write-Host "  Version: " -ForegroundColor Cyan -NoNewline
-    Write-Host "7.0 or later" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Please install PowerShell version 7.0 or later from: " -ForegroundColor Cyan -NoNewline
-    Write-Host "https://github.com/PowerShell/PowerShell" -ForegroundColor Yellow
-    Write-Host ""
-    exit 1
-}
+# Import and run prerequisites check
+$ModulesPath = Join-Path $PSScriptRoot "..\modules"
+Import-Module (Join-Path $ModulesPath "Prerequisites.psm1") -Force
+Test-Prerequisites -ExitOnFailure | Out-Null
 #endregion
 
 #region Module Imports and Initialization
 # TerraCorder Version
-$Global:TerraCoderVersion = "2.0.6"
+$Global:TerraCoderVersion = "3.0.0"
 
 # Disable verbose output to reduce noise
 $VerbosePreference = 'SilentlyContinue'
 
 # Import required modules in correct dependency order
-$ModulesPath = Join-Path $PSScriptRoot "..\modules"
+# Note: Prerequisites.psm1 already imported above
 Import-Module (Join-Path $ModulesPath "UI.psm1") -Force                          # Base UI functions (no dependencies)
 Import-Module (Join-Path $ModulesPath "Database.psm1") -Force                    # Database functions (uses UI)
-Import-Module (Join-Path $ModulesPath "PatternAnalysis.psm1") -Force             # Pattern analysis (no dependencies)
-Import-Module (Join-Path $ModulesPath "TestFunctionProcessing.psm1") -Force      # Function extraction (uses PatternAnalysis, Database)
-Import-Module (Join-Path $ModulesPath "TestFunctionStepsProcessing.psm1") -Force # Step-level analysis (uses Database, TestFunctionProcessing)
-Import-Module (Join-Path $ModulesPath "RelationalQueries.psm1") -Force           # Relational queries (uses Database)
+Import-Module (Join-Path $ModulesPath "ASTImport.psm1") -Force                   # AST-based import (Phase 1 integration)
 Import-Module (Join-Path $ModulesPath "FileDiscovery.psm1") -Force               # File discovery functions
-Import-Module (Join-Path $ModulesPath "ProcessingCore.psm1") -Force              # Core processing (uses TestFunctionProcessing)
-Import-Module (Join-Path $ModulesPath "TemplateProcessing.psm1") -Force          # Template processing
-Import-Module (Join-Path $ModulesPath "ReferencesProcessing.psm1") -Force        # Reference processing
-Import-Module (Join-Path $ModulesPath "SequentialProcessing.psm1") -Force        # Sequential processing
 Import-Module (Join-Path $ModulesPath "DatabaseMode.psm1") -Force                # Database-only mode query functions
 #endregion
 
@@ -209,9 +152,6 @@ if ($DatabaseDirectory) {
         Show-DirectoryNotFoundError -DirectoryType "Database" -DirectoryPath $DatabaseDirectory
         exit 1
     }
-
-    # If no query option specified, default to showing statistics only
-    $ShowStatisticsOnly = -not ($ShowDirectReferences -or $ShowIndirectReferences)
 
 } elseif ($ResourceName -and $RepositoryDirectory) {
     # Discovery Mode
@@ -251,8 +191,12 @@ Write-Separator
 #endregion
 
 #region Mode Execution
-# Hide cursor to reduce flashing during progress updates
-[Console]::CursorVisible = $false
+# Hide cursor to reduce flashing during progress updates (skip if in background job)
+try {
+    [Console]::CursorVisible = $false
+} catch {
+    # Ignore - likely running in background job where console is not available
+}
 
 # Initialize timing
 $scriptStartTime = Get-Date
@@ -268,263 +212,187 @@ try {
         }
 
         #region Database and Pattern Initialization
-        # Initialize database first, then regex patterns
+        # Initialize database first
         Show-PhaseHeaderGeneric -Title "Database Initialization" -Description "Terra-Corder"
-        Initialize-TerraDatabase -ExportDirectory $ExportDirectoryAbsolute -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -ElapsedColor $Script:ElapsedColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-
-        # Initialize regex patterns after database is ready and set as global
-        $Global:RegexPatterns = Initialize-RegexPatterns
+        Initialize-TerraDatabase -ExportDirectory $ExportDirectoryAbsolute -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         # Get reference to the ReferenceTypes from Database module after initialization and set as global
         $Global:ReferenceTypes = & (Get-Module Database) { $script:ReferenceTypes }
         #endregion
-        #region Phase 1: File Discovery and Filtering
-        # Phase 1: File discovery and filtering
+        #region AST-Based Discovery and Import (v3.0.0 - Replaces Phases 1-6)
+        # Phase 1: File Discovery
         Show-PhaseHeader -PhaseNumber 1 -PhaseDescription "File Discovery and Filtering"
         $phase1Start = Get-Date
 
         $discoveryResult = Get-TestFilesContainingResource -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -UseParallel $true -ThreadCount $Global:ThreadCount -NumberColor $Script:NumberColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
-        $allTestFileNames = $discoveryResult.AllFiles
         $relevantFileNames = $discoveryResult.RelevantFiles
-        $fileContents = $discoveryResult.FileContents
 
+        # Convert relative paths to full paths for Replicode
+        $testFiles = $relevantFileNames
+
+        Show-PhaseMessageHighlight -Message "Found $($testFiles.Count) Test Files Containing The Resource" -HighlightText "$($testFiles.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         $phase1Duration = (Get-Date) - $phase1Start
         Show-PhaseCompletion -PhaseNumber 1 -DurationMs ([math]::Round($phase1Duration.TotalMilliseconds, 0))
         #endregion
 
-        #region Phase 2: Categorize Files and Extract Functions
-        # Phase 2: Categorize files using cached content
-        Show-PhaseHeader -PhaseNumber 2 -PhaseDescription "Reading and Categorizing Relevant Test Files"
+        #region Phase 2: AST Analysis and Database Import
+        Show-PhaseHeader -PhaseNumber 2 -PhaseDescription "Replicode Analysis and Database Import"
         $phase2Start = Get-Date
 
-        $processingResult = Invoke-FileProcessingPhase -RelevantFileNames $relevantFileNames -FileContents $fileContents -RepositoryDirectory $RepositoryDirectory -RegexPatterns $Global:RegexPatterns -ThreadCount $Global:ThreadCount -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
+        # Verify Replicode exists
+        $replicodePath = Join-Path $PSScriptRoot "..\tools\replicode\replicode.exe"
+        if (-not (Test-Path $replicodePath)) {
+            Write-Host ""
+            Show-PhaseMessageHighlight -Message "ERROR: Replicode not found at $replicodePath" -HighlightText "ERROR" -HighlightColor "Red" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            exit 1
+        }
 
-        $resourceFiles = $processingResult.ResourceFiles
-        $sequentialFiles = $processingResult.SequentialFiles
-        $resourceFunctions = $processingResult.ResourceFunctions
+        # Run Replicode in parallel and import to database
+        Import-ASTOutput -ASTAnalyzerPath $replicodePath -TestFiles $testFiles -RepoRoot $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
-        Show-PhaseMessageHighlight -Message "Found $($resourceFunctions.Count) Test Functions That Reference The Resource" -HighlightText "$($resourceFunctions.Count)" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        Show-PhaseMessageMultiHighlight -Message "Found $($sequentialFiles.Count) Files With Sequential Test Patterns That Reference The Resource" -HighlightTexts @("$($sequentialFiles.Count)", "Sequential Test Patterns") -HighlightColors @($Script:NumberColor, $Script:ItemColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        # Phase 2.5: Discover Additional Sequential Test Files
+        # After initial import, find files with RunTestsInSequence that reference functions we just imported
+        Show-PhaseMessageHighlight -Message "Scanning For Additional Sequential Test Entry Points..." -HighlightText "Sequential" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+        # Get all test function names from the database - direct property access without looping
+        # Don't filter by naming convention - developers can name sequential functions anything!
+        $resourceFunctionNames = (Get-TestFunctions).FunctionName
+
+        if ($resourceFunctionNames.Count -gt 0) {
+            # Get all test files in the repository to search
+            $allTestFiles = Get-ChildItem -Path (Join-Path $RepositoryDirectory "internal\services") -Recurse -Filter "*_test.go" | Select-Object -ExpandProperty FullName
+
+            # Find additional files that have sequential patterns referencing our functions
+            $additionalResult = Get-AdditionalSequentialFiles `
+                -RepositoryDirectory $RepositoryDirectory `
+                -CandidateFileNames $allTestFiles `
+                -ResourceFunctions $resourceFunctionNames `
+                -FileContents @{}
+
+            $additionalFiles = $additionalResult.AdditionalFiles
+
+            if ($additionalFiles.Count -gt 0) {
+                # Filter out files that were already processed in Phase 2 (prevent duplicates!)
+                $additionalFilePaths = $additionalFiles | Select-Object -ExpandProperty FullName
+                $newFilePaths = $additionalFilePaths | Where-Object { $_ -notin $testFiles }
+
+                if ($newFilePaths.Count -gt 0) {
+                    Show-PhaseMessageMultiHighlight -Message "Found $($newFilePaths.Count) Additional Sequential Test Files" -Highlights @(
+                        @{ Text = "$($newFilePaths.Count)"; Color = $Script:NumberColor }
+                        @{ Text = "Sequential"; Color = $Script:ItemColor }
+                    ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+                    # Import only the NEW files (deduplicated)
+                    Import-ASTOutput -ASTAnalyzerPath $replicodePath -TestFiles $newFilePaths -RepoRoot $RepositoryDirectory -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                } else {
+                    Show-PhaseMessageMultiHighlight -Message "All Sequential Test Files Were Already Processed" -Highlights @(
+                        @{ Text = "All"; Color = "Yellow" }
+                        @{ Text = "Sequential"; Color = $Script:ItemColor }
+                    ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+                }
+            } else {
+                Show-PhaseMessageMultiHighlight -Message "No Additional Sequential Test Files Found" -Highlights @(
+                    @{ Text = "No"; Color = "Yellow" }
+                    @{ Text = "Sequential"; Color = $Script:ItemColor }
+                ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            }
+        }
+
+        # Show database statistics
+        $stats = Get-DatabaseStats
+        $resourceRegCount = $stats.ResourceRegistrations
+        $serviceCount = $stats.Services
+        $fileCount = $stats.Files
+        $structCount = $stats.Structs
+        $testFuncCount = $stats.TestFunctions
+        $templateFuncCount = $stats.TemplateFunctions
+        $testStepCount = $stats.TestFunctionSteps
+        $directRefCount = $stats.DirectResourceReferences
+        $templateCallCount = $stats.TemplateCallChain
+
+        # Display formatted summary block
+        Show-PhaseMessageMultiHighlight -Message "Replicode Analysis Summary:" -Highlights @(
+            @{ Text = "Replicode"; Color = $Script:ItemColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  Registry  : $resourceRegCount Resource-to-Service Mappings" -Highlights @(
+            @{ Text = "$resourceRegCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  Structure : $serviceCount Services, $fileCount Files, $structCount Structs" -Highlights @(
+            @{ Text = "$serviceCount"; Color = $Script:NumberColor }
+            @{ Text = "$fileCount"; Color = $Script:NumberColor }
+            @{ Text = "$structCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  Functions : $testFuncCount Tests, $templateFuncCount Configuration" -Highlights @(
+            @{ Text = "$testFuncCount"; Color = $Script:NumberColor }
+            @{ Text = "$templateFuncCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Show-PhaseMessageMultiHighlight -Message "  References: $testStepCount Steps, $directRefCount Direct, $templateCallCount Calls" -Highlights @(
+            @{ Text = "$testStepCount"; Color = $Script:NumberColor }
+            @{ Text = "$directRefCount"; Color = $Script:NumberColor }
+            @{ Text = "$templateCallCount"; Color = $Script:NumberColor }
+        ) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         $phase2Duration = (Get-Date) - $phase2Start
         Show-PhaseCompletion -PhaseNumber 2 -DurationMs ([math]::Round($phase2Duration.TotalMilliseconds, 0))
         #endregion
 
-        #region Phase 3: Find Additional Sequential Patterns
-        # Phase 3: Find additional sequential files that reference our resource functions
-        Show-PhaseHeader -PhaseNumber 3 -PhaseDescription "Finding Additional Sequential Test Patterns"
+        #region Phase 3: CSV Export
+        # Phase 3: Export database to CSV files
+        Show-PhaseHeader -PhaseNumber 3 -PhaseDescription "Exporting Database to CSV"
         $phase3Start = Get-Date
 
-        # Ensure resourceFunctions is not null and is proper array
-        if ($null -eq $resourceFunctions -or $resourceFunctions -isnot [array]) {
-            $resourceFunctions = @()
-        }
-        $resourceFunctions = [array]$resourceFunctions
-
-        # Convert relative file names to full paths for consistency
-        $allTestFileNamesFull = $allTestFileNames | ForEach-Object { "$RepositoryDirectory\internal\services\$_" }
-
-        try {
-            # Ensure we pass a proper array type to avoid parameter binding issues
-            $resourceFunctionsArray = @($resourceFunctions)
-            $additionalResult = Get-AdditionalSequentialFiles -RepositoryDirectory $RepositoryDirectory -CandidateFileNames $allTestFileNamesFull -ResourceFunctions $resourceFunctionsArray -FileContents $fileContents
-        } catch {
-            $additionalResult = @{
-                AdditionalFiles = @()
-                UpdatedFileContents = $fileContents
-            }
-        }
-
-        $additionalSequentialFiles = $additionalResult.AdditionalFiles
-        $fileContents = $additionalResult.UpdatedFileContents
-
-        Show-PhaseMessageMultiHighlight -Message "Found $($additionalSequentialFiles.Count) Additional Sequential Test Patterns That Reference The Resource" -HighlightTexts @("$($additionalSequentialFiles.Count)", "Sequential Test Patterns") -HighlightColors @($Script:NumberColor, $Script:ItemColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-
-        # Combine all relevant files
-        $allRelevantFiles = @($resourceFiles) + @($additionalSequentialFiles) | Sort-Object FullName -Unique
-        Show-PhaseMessageHighlight -Message "Found A Total Of $($allRelevantFiles.Count) Files To Analyze" -HighlightText $($allRelevantFiles.Count) -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        Export-DatabaseToCSV -NumberColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
         $phase3Duration = (Get-Date) - $phase3Start
         Show-PhaseCompletion -PhaseNumber 3 -DurationMs ([math]::Round($phase3Duration.TotalMilliseconds, 0))
-
-        if ($allRelevantFiles.Count -eq 0) {
-            Write-Host ""
-            Show-PhaseMessageHighlight -Message "No Tests Found For Resource '$ResourceName'" -HighlightText $($ResourceName) -HighlightColor "Magenta" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            exit 0
-        }
         #endregion
 
-        #region Phase 4: Database Population and Cross-File Analysis
-        # Phase 4: Populate database using cached file contents
-        Show-PhaseHeader -PhaseNumber 4 -PhaseDescription "Populating Database Tables"
+        #region Phase 4: Generate Go Test Commands
+        Show-PhaseHeader -PhaseNumber 4 -PhaseDescription "Generating Go Test Commands"
         $phase4Start = Get-Date
 
-        # Ensure fileContents is not null - use proper null check for hashtables
-        if ($null -eq $fileContents -or $fileContents.GetType().Name -ne "Hashtable") {
-            $fileContents = @{}
+        # Get all services that have test files in the database
+        $allServices = Get-Services
+        $allFiles = Get-Files
+
+        # Group files by service to create service groups
+        $serviceGroups = @()
+        foreach ($service in $allServices) {
+            $serviceFiles = $allFiles | Where-Object { $_.ServiceRefId -eq $service.ServiceRefId }
+            if ($serviceFiles) {
+                $serviceGroups += @{
+                    Name = $service.Name
+                    ServiceRefId = $service.ServiceRefId
+                }
+            }
         }
 
-        $databaseResult = Invoke-DatabasePopulation -AllRelevantFiles $allRelevantFiles -FileContents $fileContents -RepositoryDirectory $RepositoryDirectory -RegexPatterns $Global:RegexPatterns -ThreadCount $Global:ThreadCount -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
-        $allTestResults = $databaseResult.AllTestResults
-        $allSequentialTests = $databaseResult.AllSequentialTests
-        $functionDatabase = $databaseResult.FunctionDatabase
+        # Sort service groups alphabetically by name
+        $serviceGroups = $serviceGroups | Sort-Object -Property Name
 
-        # Process both regular and sequential test functions into unified TestFunctionSteps table
-        $testFunctions = Get-TestFunctions
+        if ($serviceGroups.Count -gt 0) {
+            $commandsResult = Show-GoTestCommands -ServiceGroups $serviceGroups -ExportDirectory $ExportDirectoryAbsolute -WriteToFile
+            # Report actual count of services with test commands, not all services with files
+            $actualServiceCount = $commandsResult.ConsoleData.Count
+            Show-PhaseMessageHighlight -Message "Generated Test Commands For $actualServiceCount Services" -HighlightText "$actualServiceCount" -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-PhaseMessageHighlight -Message "Exported: go_test_commands.txt" -HighlightText "go_test_commands.txt" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
 
-        # Use encapsulated business logic from TestFunctionStepsProcessing module
-        Invoke-TestFunctionStepsProcessing -TestFunctions $testFunctions -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor | Out-Null
+            $phase4Duration = (Get-Date) - $phase4Start
+            Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round($phase4Duration.TotalMilliseconds, 0))
 
-        # Phase 4a.5: Resolve cross-file struct references using JOIN-like operations
-        Show-PhaseMessageHighlight -Message "Resolving CROSS_FILE Struct References" -HighlightText "CROSS_FILE" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        $crossFileUpdates = Update-CrossFileStructReferences
-        Show-PhaseMessageMultiHighlight -Message "Updated $crossFileUpdates CROSS_FILE Records" -HighlightTexts @("$crossFileUpdates", "CROSS_FILE") -HighlightColors @($Script:NumberColor, $Script:ItemColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-
-        # Phase 4a.6: Resolve cross-file struct references in TestFunctionSteps
-        # Use optimized database-first implementation
-        Update-CrossFileStructReferencesInSteps -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
-
-        # Phase 4a.7: Update referential integrity for unresolved struct visibility
-        Update-TestFunctionStepReferentialIntegrity -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
-        $phase4aElapsed = (Get-Date) - $phase4Start
-
-        # Phase 4b: Build template function database for indirect reference detection
-        $phase4bStart = Get-Date
-
-        $templateResult = Invoke-TemplateFunctionProcessing -AllRelevantFiles $allRelevantFiles -FileContents $fileContents -RepositoryDirectory $RepositoryDirectory -ResourceName $ResourceName -RegexPatterns $Global:RegexPatterns -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
-
-        $allTemplateFunctionsWithResource = $templateResult.TemplateFunctions
-        # Template database is used internally by the processing functions
-
-        $phase4bElapsed = (Get-Date) - $phase4bStart
-        Show-PhaseMessageMultiHighlight -Message "Found $($allTemplateFunctionsWithResource.Count) Test Configuration Functions Containing The Resource ($([math]::Round($phase4bElapsed.TotalMilliseconds, 0)) ms)" -HighlightTexts @("$($allTemplateFunctionsWithResource.Count)", "$([math]::Round($phase4bElapsed.TotalMilliseconds, 0)) ms") -HighlightColors @($Script:NumberColor, $Script:ElapsedColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-
-        # Phase 4.5: Dynamic Template Dependency Discovery
-        $phase4cStart = Get-Date
-
-        # Ensure allTemplateFunctionsWithResource is not null
-        if (-not $allTemplateFunctionsWithResource) {
-            $allTemplateFunctionsWithResource = @{}
-        }
-
-        $dependencyResult = Invoke-DynamicTemplateDependencyDiscovery -AllTestFileNames $allTestFileNamesFull -RepositoryDirectory $RepositoryDirectory -AllTemplateFunctionsWithResource $allTemplateFunctionsWithResource -RegexPatterns $Global:RegexPatterns -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
-
-        $newFilesDiscovered = $dependencyResult.NewFilesDiscovered
-        $iterationCount = $dependencyResult.IterationCount
-        # Note: fileContents now retrieved from database, no longer maintained as hashtable
-
-        $allTemplateFunctionsWithResource = $dependencyResult.UpdatedTemplateFunctions
-
-        $phase4cElapsed = (Get-Date) - $phase4cStart
-        # Ensure newFilesDiscovered is not null or empty for display
-        if (-not $newFilesDiscovered) { $newFilesDiscovered = 0 }
-        Show-PhaseMessageMultiHighlight -Message "Found $newFilesDiscovered New Test Configuration Dependencies In $iterationCount Iterations ($([math]::Round($phase4cElapsed.TotalMilliseconds, 0)) ms)" -HighlightTexts @("$newFilesDiscovered", "$iterationCount", "$([math]::Round($phase4cElapsed.TotalMilliseconds, 0)) ms") -HighlightColors @($Script:NumberColor, $Script:NumberColor, $Script:ElapsedColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-
-        Show-PhaseMessageHighlight -Message "Database Population Complete ($([math]::Round($phase4aElapsed.TotalMilliseconds, 0)) ms)" -HighlightText "$([math]::Round($phase4aElapsed.TotalMilliseconds, 0)) ms" -HighlightColor $Script:ElapsedColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round(($phase4aElapsed.TotalMilliseconds + $phase4bElapsed.TotalMilliseconds + $phase4cElapsed.TotalMilliseconds), 0))
-        #endregion
-
-        #region Phase 5: Resource and Configuration References
-        # Phase 5: Populating Resource and Configuration References
-        Show-PhaseHeader -PhaseNumber 5 -PhaseDescription "Populating Resource and Configuration References"
-        $phase45Start = Get-Date
-
-        # Globals are already set during initialization
-
-        # Use relational approach - pre-load ALL database data ONCE, use O(1) hashtable lookups!
-        Invoke-RelationalReferencesPopulation -AllRelevantFiles $allRelevantFiles -ResourceName $ResourceName -RepositoryDirectory $RepositoryDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor | Out-Null
-
-        # Phase 5.5: Classify ServiceImpactTypeId for template dependencies
-        Update-ServiceImpactReferentialIntegrity -ResourceName $ResourceName -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -InfoColor $Script:InfoColor -BaseColor $Script:BaseColor
-
-        # Note: Proper go test command generation moved to Phase 7 using database-driven approach
-
-        $phase45Elapsed = (Get-Date) - $phase45Start
-        Show-PhaseCompletion -PhaseNumber 5 -DurationMs ([math]::Round($phase45Elapsed.TotalMilliseconds, 0))
-        #endregion
-
-        #region Phase 6: Sequential References Population
-        # Phase 6: Populate SequentialReferences table and update entry points
-        Show-PhaseHeader -PhaseNumber 6 -PhaseDescription "Populating SequentialReferences table"
-        $phase6Start = Get-Date
-
-        # Ensure variables are not null
-        if (-not $allSequentialTests) { $allSequentialTests = @() }
-        if (-not $functionDatabase) { $functionDatabase = @{} }
-
-        $sequentialResult = Invoke-SequentialReferencesPopulation -AllSequentialTests $allSequentialTests -FunctionDatabase $functionDatabase
-        $sequentialReferencesAdded = $sequentialResult.SequentialReferencesAdded
-        $externalStubsCreated = $sequentialResult.ExternalStubsCreated
-
-        if ($sequentialReferencesAdded -gt 0) {
-            Show-PhaseMessageMultiHighlight -Message "Inserted $($sequentialReferencesAdded) Sequential Reference Records" -HighlightTexts @("$($sequentialReferencesAdded)", "Sequential Reference Records") -HighlightColors @($Script:NumberColor, $Script:ItemColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        }
-
-        if ($externalStubsCreated -gt 0) {
-            Show-PhaseMessageMultiHighlight -Message "Created $($externalStubsCreated) External Function Stub Records" -HighlightTexts @("$($externalStubsCreated)", "External Function Stub Records") -HighlightColors @($Script:NumberColor, $Script:ItemColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-
-            # Update sequential entry point references if we have sequential data
-            Show-PhaseMessageMultiHighlight -Message "Updating Sequential Entry Point References" -HighlightTexts @("Sequential Entry Point") -HighlightColors @($Script:ItemColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            $entryPointUpdates = Update-SequentialEntryPointReferences
-            Show-PhaseMessageMultiHighlight -Message "Updated $entryPointUpdates Sequential Entry Point References In TestFunctions" -HighlightTexts @("$entryPointUpdates", "Sequential Entry Point") -HighlightColors @($Script:NumberColor, $Script:ItemColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            # Display test commands to console
+            Show-RunTestsByService -CommandsResult $commandsResult -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor
         } else {
-            Show-PhaseMessageMultiHighlight -Message "No Sequential Test Functions Detected - Skipping Sequential Processing" -HighlightTexts @("Sequential Test Functions", "Skipping Sequential Processing") -HighlightColors @($Script:ItemColor, $Script:NumberColor) -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+            Show-PhaseMessageHighlight -Message "No Services Found To Generate Test Commands" -HighlightText "No" -HighlightColor "Yellow" -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+
+            $phase4Duration = (Get-Date) - $phase4Start
+            Show-PhaseCompletion -PhaseNumber 4 -DurationMs ([math]::Round($phase4Duration.TotalMilliseconds, 0))
         }
 
-        $phase6Elapsed = (Get-Date) - $phase6Start
-        Show-PhaseCompletion -PhaseNumber 6 -DurationMs ([math]::Round($phase6Elapsed.TotalMilliseconds, 0))
-        #endregion
-
-        #region Phase 7: Generate Go Test Commands
-        # Phase 7: Group by service and create test command
-        Show-PhaseHeader -PhaseNumber 7 -PhaseDescription "Generating go test commands"
-        $phase7Start = Get-Date
-
-        $serviceResult = Get-ServiceTestResults -AllTestResults $allTestResults -AllSequentialTests $allSequentialTests -ResourceFunctions $resourceFunctions
-        $serviceGroups = $serviceResult.ServiceGroups
-
-        $commandsResult = Show-GoTestCommands -ServiceGroups $serviceGroups -ExportDirectory $ExportDirectoryAbsolute -WriteToFile
-
-        $serviceCount = if ($serviceGroups) { $serviceGroups.Count } else { 0 }
-        Show-PhaseMessageHighlight -Message "Generated Test Commands For $serviceCount Service$(if ($serviceCount -ne 1) { 's' })" -HighlightText $serviceCount -HighlightColor $Script:NumberColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        if ($commandsResult.OutputFile) {
-            $fileName = Split-Path $commandsResult.OutputFile -Leaf
-            Show-PhaseMessageHighlight -Message "Exported: $fileName" -HighlightText "$fileName" -HighlightColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        }
-
-        $phase7Elapsed = (Get-Date) - $phase7Start
-        Show-PhaseCompletion -PhaseNumber 7 -DurationMs ([math]::Round($phase7Elapsed.TotalMilliseconds, 0))
-        #endregion
-
-        #region Phase 8: Output Results
-        # Phase 8: Output results
-        $phase8Start = Get-Date
-        Show-PhaseHeader -PhaseNumber 8 -PhaseDescription "Exporting Database CSV Files"
-
-        Export-DatabaseToCSV -ItemColor $ItemColor -NumberColor $NumberColor -BaseColor $BaseColor -InfoColor $InfoColor
-
-        $phase8Elapsed = (Get-Date) - $phase8Start
-        Show-PhaseCompletion -PhaseNumber 8 -DurationMs ([math]::Round($phase8Elapsed.TotalMilliseconds, 0))
-
-        # Ensure variables are still properly initialized for Phase 8
-        if ($null -eq $allSequentialTests -or $allSequentialTests -isnot [array]) { $allSequentialTests = @() }
-        if ($null -eq $resourceFunctions -or $resourceFunctions -isnot [array]) { $resourceFunctions = @() }
-
-        # Convert to arrays explicitly to ensure proper type and force PowerShell to treat them as collections
-        $allSequentialTests = [array]@($allSequentialTests)
-        $resourceFunctions = [array]@($resourceFunctions)
         #endregion
 
         #region Display Results and Completion
-        # Display console output using the new UI function
-        # TODO: Implement full Show-FinalSummary with complete AnalysisData structure
-        #       This should include:
-        #       1. Repository Summary (Files With Matches, Direct/Template/Cross-File References, etc.)
-        #       2. Unique Test Prefixes section (list of all TestAcc prefixes found)
-        #       3. Required Acceptance Test Execution (current go test commands - implemented)
-        Show-RunTestsByService -ServiceGroups $serviceGroups -CommandsResult $commandsResult -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor
-
         # Calculate total execution time
         $totalElapsed = (Get-Date) - $scriptStartTime
         Write-Host ""
@@ -539,21 +407,15 @@ try {
     if (-not $IsDiscoveryMode) {
         #region DATABASE MODE
         # Import database from CSV files
-            Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor | Out-Null
+        Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor | Out-Null
 
-        # Execute requested query operations
-        if ($ShowStatisticsOnly) {
-            # Default behavior: Show database statistics and available options
-            Show-DatabaseStatistics -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-        } else {
-            # Show individual reference types if requested
-            if ($ShowDirectReferences) {
-                Show-DirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            }
+        # Execute requested query operations (or show statistics if no flags specified)
+        if ($ShowDirectReferences) {
+            Show-DirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
+        }
 
-            if ($ShowIndirectReferences) {
-                Show-IndirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
-            }
+        if ($ShowIndirectReferences) {
+            Show-IndirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
         }
 
         # Calculate total execution time
@@ -576,7 +438,11 @@ try {
     Write-Host $_.ScriptStackTrace -ForegroundColor Gray
     throw
 } finally {
-    # Always restore cursor visibility, even if script fails
-    [Console]::CursorVisible = $true
+    # Always restore cursor visibility, even if script fails (skip if in background job)
+    try {
+        [Console]::CursorVisible = $true
+    } catch {
+        # Ignore - likely running in background job where console is not available
+    }
 }
 #endregion

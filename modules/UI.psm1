@@ -29,20 +29,23 @@ function Get-VSCodeSyntaxColors {
     #>
     return @{
         # Core syntax colors
-        Keyword         = "#569CD6"  # Blue - Keywords (resource, data, var, func, if, else, for, while, return)
-        Type            = "#4EC9B0"  # Teal - Types, struct names, interface names
-        String          = "#CE9178"  # Salmon - String literals, regex groups
-        Number          = "#B5CEA8"  # Light green - Numeric literals
-        Comment         = "#6A9955"  # Green - Comments
-        Function        = "#DCDCAA"  # Gold - Function names, methods, custom literals
-        Variable        = "#9CDCFE"  # Light blue - Variables, parameters, properties, format specifiers
-        Constant        = "#4FC1FF"  # Bright blue - Constants, enum members
-        ControlFlow     = "#C586C0"  # Purple - Control flow keywords, new operator
+        Keyword           = "#569CD6"  # Blue - Keywords (resource, data, var, func, if, else, for, while, return)
+        Type              = "#4EC9B0"  # Teal - Types, struct names, interface names
+        String            = "#CE9178"  # Salmon - String literals, regex groups
+        Number            = "#B5CEA8"  # Light green - Numeric literals
+        Comment           = "#6A9955"  # Green - Comments
+        FunctionHighlight = "#DCDCAA"  # Gold - Function names, methods, custom literals
+        Function          = "#CCB176"  # Dark Gold - Function names, methods, custom literals
+        Variable          = "#277378"  # Dark Cyan - Variables, parameters, properties, format specifiers
+        VariableBracket   = "#1F1FA8"  # Dark blue - Variable interpolation brackets (${...})
+        Constant          = "#4FC1FF"  # Bright blue - Constants, enum members
+        ControlFlow       = "#C586C0"  # Purple - Control flow keywords, new operator
 
         # Special highlighting
         Highlight       = "#9CDCFE"  # Light blue - Emphasized elements (resource names, tree structure, keys)
-        HighlightAlt    = "#FF7F50"  # Coral - Alternative emphasis (sequential keys, special values)
         StringHighlight = "#d7a895"  # Lighter peachy-salmon - String highlighting for resource names
+        HighlightAlt    = "#FF7F50"  # Coral - Alternative emphasis (sequential keys, special values)
+        FindBackground  = "#623315"  # Dark brown - String highlighting for resource names (darker contrast)
 
         # UI colors
         LineNumber      = "#808080"  # Medium gray - Line numbers in output (visible in PowerShell console)
@@ -61,6 +64,10 @@ function Get-VSCodeSyntaxColors {
         BracketLevel1   = "#FFD700"  # Gold - Outermost brackets (Level 1)
         BracketLevel2   = "#DA70D6"  # Orchid/Pink - Middle brackets (Level 2)
         BracketLevel3   = "#179FFF"  # Bright blue - Innermost brackets (Level 3)
+
+        # Indirect References colors
+        CrossService      = "#fd935bff"  # Coral/salmon
+        ExternalReference = "#E74C3C"  # Hard red
     }
 }
 
@@ -73,13 +80,19 @@ function Write-HostRGB {
         The text to display
 
     .PARAMETER HexColor
-        Hex color code (e.g., "#569CD6")
+        Hex color code for foreground (e.g., "#569CD6")
+
+    .PARAMETER BackgroundColor
+        Optional hex color code for background (e.g., "#623315")
 
     .PARAMETER NoNewline
         Suppress newline after output
 
     .EXAMPLE
         Write-HostRGB "resource" "#569CD6" -NoNewline
+
+    .EXAMPLE
+        Write-HostRGB "azurerm_subnet" "#CE9178" -BackgroundColor "#623315" -NoNewline
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -89,10 +102,13 @@ function Write-HostRGB {
         [string]$HexColor,
 
         [Parameter(Mandatory = $false)]
+        [string]$BackgroundColor = "",
+
+        [Parameter(Mandatory = $false)]
         [switch]$NoNewline
     )
 
-    # Convert hex to RGB
+    # Convert foreground hex to RGB
     $hex = $HexColor.TrimStart('#')
     $r = [Convert]::ToInt32($hex.Substring(0,2), 16)
     $g = [Convert]::ToInt32($hex.Substring(2,2), 16)
@@ -100,6 +116,16 @@ function Write-HostRGB {
 
     $esc = [char]27
     $colorCode = "$esc[38;2;${r};${g};${b}m"
+
+    # Add background color if provided
+    if ($BackgroundColor) {
+        $bgHex = $BackgroundColor.TrimStart('#')
+        $bgR = [Convert]::ToInt32($bgHex.Substring(0,2), 16)
+        $bgG = [Convert]::ToInt32($bgHex.Substring(2,2), 16)
+        $bgB = [Convert]::ToInt32($bgHex.Substring(4,2), 16)
+        $colorCode += "$esc[48;2;${bgR};${bgG};${bgB}m"
+    }
+
     $reset = "$esc[0m"
 
     if ($NoNewline) {
@@ -296,47 +322,41 @@ function Show-PhaseMessageMultiHighlight {
         each with their own color. Useful for messages that need to emphasize multiple values.
     .PARAMETER Message
         The complete message text containing all the highlight text elements
-    .PARAMETER HighlightTexts
-        Array of text strings to be highlighted in the message
-    .PARAMETER HighlightColors
-        Array of colors corresponding to each highlight text. If fewer colors than texts are provided,
-        the last color will be reused for remaining texts.
+    .PARAMETER Highlights
+        Array of hashtables, each containing 'Text' and 'Color' properties.
+        Example: @( @{ Text = "1664"; Color = "Yellow" }, @{ Text = "files"; Color = "Cyan" } )
     .EXAMPLE
-        Show-PhaseMessageMultiHighlight -Message "Found: Reduced to 1664 files (excluded 1008 irrelevant files)" -HighlightTexts @("1664", "1008") -HighlightColors @("Yellow", "Red")
+        Show-PhaseMessageMultiHighlight -Message "Found 1664 files" -Highlights @(
+            @{ Text = "1664"; Color = "Yellow" }
+            @{ Text = "files"; Color = "Cyan" }
+        )
     #>
     param(
         [Parameter(Mandatory = $true)]
         [string]$Message,
         [Parameter(Mandatory = $true)]
-        [array]$HighlightTexts,
-        [Parameter(Mandatory = $false)]
-        [array]$HighlightColors = @("Cyan"),
+        [array]$Highlights,
         [Parameter(Mandatory = $false)]
         [string]$BaseColor = "Gray",
         [Parameter(Mandatory = $false)]
         [string]$InfoColor = "Cyan"
     )
 
-    # Ensure we have at least one color
-    if ($HighlightColors.Count -eq 0) {
-        $HighlightColors = @("Cyan")
-    }
-
     # Create a working copy of the message
     $workingMessage = $Message
 
     # Find all highlight positions with their colors
-    $highlights = @()
+    $highlightPositions = @()
 
-    for ($i = 0; $i -lt $HighlightTexts.Count; $i++) {
-        $text = [string]$HighlightTexts[$i]
-        $colorIndex = [Math]::Min($i, $HighlightColors.Count - 1)
-        $color = $HighlightColors[$colorIndex]
+    for ($i = 0; $i -lt $Highlights.Count; $i++) {
+        $highlight = $Highlights[$i]
+        $text = [string]$highlight.Text
+        $color = $highlight.Color
 
         # Find all occurrences of this text
         $searchPos = 0
         while (($index = $workingMessage.IndexOf($text, $searchPos)) -ge 0) {
-            $highlights += @{
+            $highlightPositions += @{
                 Start = $index
                 End = $index + $text.Length - 1
                 Text = $text
@@ -349,13 +369,13 @@ function Show-PhaseMessageMultiHighlight {
     }
 
     # Sort highlights by start position, then by order if same position
-    $highlights = $highlights | Sort-Object Start, Order
+    $highlightPositions = $highlightPositions | Sort-Object Start, Order
 
     # Remove overlapping highlights, keeping the first one at each position
     $filteredHighlights = @()
     $lastEnd = -1
 
-    foreach ($highlight in $highlights) {
+    foreach ($highlight in $highlightPositions) {
         if ($highlight.Start -gt $lastEnd) {
             $filteredHighlights += $highlight
             $lastEnd = $highlight.End
@@ -439,8 +459,6 @@ function Show-InlineProgress {
         [Parameter(Mandatory = $false)]
         [string]$NumberColor = "Green",
         [Parameter(Mandatory = $false)]
-        [string]$ItemColor = "Cyan",
-        [Parameter(Mandatory = $false)]
         [string]$BaseColor = "Gray",
         [Parameter(Mandatory = $false)]
         [string]$InfoColor = "Cyan"
@@ -484,12 +502,8 @@ function Show-RunTestsByService {
     .DESCRIPTION
         Displays go test commands for each service, organized by service name with all
         test prefixes for that service joined with pipe separators.
-    .PARAMETER ServiceGroups
-        Array of service group objects containing Name and test data
     .PARAMETER CommandsResult
         Result object from Show-GoTestCommands containing ConsoleData with test prefixes
-    .PARAMETER NumberColor
-        Color for numbers in output messages
     .PARAMETER ItemColor
         Color for item types in output messages
     .PARAMETER BaseColor
@@ -497,13 +511,7 @@ function Show-RunTestsByService {
     #>
     param(
         [Parameter(Mandatory = $true)]
-        [array]$ServiceGroups,
-
-        [Parameter(Mandatory = $true)]
         [hashtable]$CommandsResult,
-
-        [Parameter(Mandatory = $false)]
-        [string]$NumberColor = "Green",
 
         [Parameter(Mandatory = $false)]
         [string]$ItemColor = "Cyan",
@@ -790,7 +798,7 @@ function Show-MutuallyExclusiveModesError {
     Write-Host "  Discovery: " -ForegroundColor Cyan -NoNewline
     Write-Host ".\terracorder.ps1 -ResourceName 'azurerm_subnet' -RepositoryDirectory 'C:\repo'" -ForegroundColor White
     Write-Host "  Database:  " -ForegroundColor Cyan -NoNewline
-    Write-Host ".\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowAllReferences" -ForegroundColor White
+    Write-Host ".\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowIndirectReferences" -ForegroundColor White
     Write-Host ""
 }
 
@@ -843,11 +851,11 @@ function Show-MissingParametersError {
     Write-Host "     Required: " -ForegroundColor Cyan -NoNewline
     Write-Host "-DatabaseDirectory <path>" -ForegroundColor White
     Write-Host "     Options:  " -ForegroundColor Cyan -NoNewline
-    Write-Host "-ShowDirectReferences, -ShowIndirectReferences, -ShowAllReferences, etc." -ForegroundColor White
+    Write-Host "-ShowDirectReferences, -ShowIndirectReferences" -ForegroundColor White
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Cyan
     Write-Host "  .\terracorder.ps1 -ResourceName 'azurerm_subnet' -RepositoryDirectory 'C:\terraform-provider-azurerm'" -ForegroundColor White
-    Write-Host "  .\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowAllReferences" -ForegroundColor White
+    Write-Host "  .\terracorder.ps1 -DatabaseDirectory 'C:\output' -ShowIndirectReferences" -ForegroundColor White
     Write-Host ""
 }
 
@@ -890,16 +898,10 @@ function Show-ComprehensiveHelp {
     Write-Host " (Query Existing Data):"
     Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
-    Write-Host "                    # Show available options"
-    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
-    Write-Host '".\output"' -ForegroundColor Green -NoNewline
     Write-Host " -ShowDirectReferences"
     Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
     Write-Host " -ShowIndirectReferences"
-    Write-Host "     .\terracorder.ps1 -DatabaseDirectory " -NoNewline
-    Write-Host '".\output"' -ForegroundColor Green -NoNewline
-    Write-Host " -ShowAllReferences"
     Write-Host ""
 
     Write-Host "PARAMETERS:" -ForegroundColor Yellow
@@ -913,7 +915,6 @@ function Show-ComprehensiveHelp {
     Write-Host "    -DatabaseDirectory      Path to existing CSV database"
     Write-Host "    -ShowDirectReferences   Display direct resource/data declarations"
     Write-Host "    -ShowIndirectReferences Display template dependencies and sequential chains"
-    Write-Host "    -ShowAllReferences      Display complete analysis (Direct + Indirect)"
     Write-Host "    -ExportDirectory        CSV database directory (default: ../output)"
     Write-Host ""
     Write-Host "  General:" -ForegroundColor Cyan
@@ -951,10 +952,10 @@ function Show-ComprehensiveHelp {
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
     Write-Host " -ShowDirectReferences"
     Write-Host ""
-    Write-Host "  # Query existing database - all references"
+    Write-Host "  # Query existing database - indirect references"
     Write-Host "  .\terracorder.ps1 -DatabaseDirectory " -NoNewline
     Write-Host '".\output"' -ForegroundColor Green -NoNewline
-    Write-Host " -ShowAllReferences"
+    Write-Host " -ShowIndirectReferences"
     Write-Host ""
 }
 

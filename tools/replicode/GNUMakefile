@@ -1,0 +1,105 @@
+# GNUMakefile for Replicode
+# Provides easy build commands for the TerraCorder Replicode tool
+
+# Binary name differs by platform
+BINARY_NAME=replicode
+ifeq ($(OS),Windows_NT)
+	BINARY_NAME := replicode.exe
+endif
+
+# Go build settings
+GOCMD=go
+GOBUILD=$(GOCMD) build
+GOCLEAN=$(GOCMD) clean
+GOTEST=$(GOCMD) test
+GOGET=$(GOCMD) get
+GOMOD=$(GOCMD) mod
+
+# Source files
+SOURCES=main.go patterns.go
+
+# Build the Replicode binary
+.PHONY: build
+build: $(SOURCES)
+	@echo "Building Replicode..."
+	$(GOBUILD) -o $(BINARY_NAME) -v
+	@echo "Build complete: $(BINARY_NAME)"
+
+# Clean build artifacts
+.PHONY: clean
+clean:
+	@echo "Cleaning build artifacts..."
+	$(GOCLEAN)
+	@if [ -f $(BINARY_NAME) ]; then rm $(BINARY_NAME); echo "Removed $(BINARY_NAME)"; fi
+	@echo "Clean complete"
+
+# Download dependencies
+.PHONY: deps
+deps:
+	@echo "Downloading dependencies..."
+	$(GOMOD) download
+	@echo "Dependencies downloaded"
+
+# Tidy go.mod
+.PHONY: tidy
+tidy:
+	@echo "Tidying go.mod..."
+	$(GOMOD) tidy
+	@echo "Tidy complete"
+
+# Run tests (if any exist)
+.PHONY: test
+test:
+	@echo "Running tests..."
+	$(GOTEST) -v ./...
+	@echo "Tests complete"
+
+# Build for multiple platforms
+.PHONY: build-all
+build-all:
+	@echo "Building for multiple platforms..."
+	@echo "Building for Windows..."
+	GOOS=windows GOARCH=amd64 $(GOBUILD) -o replicode.exe -v
+	@echo "Building for Linux..."
+	GOOS=linux GOARCH=amd64 $(GOBUILD) -o replicode-linux -v
+	@echo "Building for macOS..."
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) -o replicode-darwin -v
+	@echo "Multi-platform build complete"
+
+# Rebuild (clean + build)
+.PHONY: rebuild
+rebuild: clean build
+
+# Install the binary to GOPATH/bin
+.PHONY: install
+install:
+	@echo "Installing to GOPATH/bin..."
+	$(GOCMD) install -v
+	@echo "Install complete"
+
+# Show help
+.PHONY: help
+help:
+	@echo "TerraCorder Replicode - Available targets:"
+	@echo ""
+	@echo "  make build       - Build the Replicode binary (default)"
+	@echo "  make clean       - Remove build artifacts"
+	@echo "  make rebuild     - Clean and rebuild"
+	@echo "  make deps        - Download Go module dependencies"
+	@echo "  make tidy        - Tidy go.mod file"
+	@echo "  make test        - Run tests"
+	@echo "  make build-all   - Build for Windows, Linux, and macOS"
+	@echo "  make install     - Install to GOPATH/bin"
+	@echo "  make help        - Show this help message"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make              # Same as 'make build'"
+	@echo "  make rebuild      # Clean and build from scratch"
+	@echo "  make build-all    # Create binaries for all platforms"
+	@echo ""
+	@echo "Windows Users:"
+	@echo "  Use WSL: wsl make"
+	@echo "  Or PowerShell: .\\Build.ps1"
+
+# Default target
+.DEFAULT_GOAL := build

@@ -2,11 +2,12 @@
 
 *"Analyzing Terraform test matrix... Building comprehensive dependency database!"*
 
-A high-performance **database-driven** Terraform test analysis tool that identifies all tests needed when modifying Azure resources in the Terraform AzureRM provider. TerraCorder builds a complete relational database of test dependencies, tracking direct resource usage, template references, and sequential test patterns with full foreign key relationships.
+A high-performance **AST-based semantic analysis tool** that identifies all tests needed when modifying Azure resources in the Terraform AzureRM provider. TerraCorder uses a Go AST (Abstract Syntax Tree) analyzer to perform deep syntactic parsing of test files, building a complete relational database of test dependencies with direct resource usage, template references, and sequential test patterns tracked through full foreign key relationships.
 
-**Two powerful modes:** Discovery Mode for initial analysis with multi-threaded processing, and Database Mode for fast querying of previously analyzed data!
+**Two powerful modes:** Discovery Mode for initial AST analysis and database building, and Database Mode for fast querying of previously analyzed data!
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?style=flat&logo=powershell&logoColor=white)](https://github.com/PowerShell/PowerShell)
+[![Go](https://img.shields.io/badge/Go-00ADD8?style=flat&logo=go&logoColor=white)](https://go.dev/)
 [![Terraform](https://img.shields.io/badge/Terraform-623CE4?style=flat&logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![Azure](https://img.shields.io/badge/Azure-0089D0?style=flat&logo=microsoft-azure&logoColor=white)](https://azure.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -15,14 +16,16 @@ A high-performance **database-driven** Terraform test analysis tool that identif
 ## Features
 
 ### Discovery Mode (Initial Analysis)
+- **AST Semantic Analysis**: Go-based Abstract Syntax Tree parser performs deep syntactic analysis (not regex pattern matching)
 - **Relational Database Architecture**: Full normalized database with foreign key relationships tracking all test dependencies
-- **Multi-Threaded Processing**: Parallel file processing with up to 8 threads for maximum performance
-- **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns
-- **Database Export**: Complete CSV exports of all 12 database tables for advanced analysis
-- **Visual Progress Tracking**: Real-time multi-threaded progress with file-by-file scanning feedback
+- **Single-Pass AST Processing**: Efficient Replicode extracts all metadata in one pass per file
+- **Comprehensive Dependency Detection**: Tracks direct resource usage, template references, and sequential test patterns through AST call graph analysis
+- **Database Export**: Complete CSV exports of all 14 database tables for advanced analysis
+- **Resource Ownership Tracking**: Master mapping of all Terraform resources to their owning Azure services
+- **Visual Progress Tracking**: Real-time progress with file-by-file scanning feedback during sequential discovery
 - **Smart Test Command Generation**: Automatically generates optimized `go test` commands by service
-- **Sequential Test Support**: Detects and tracks `acceptance.RunTestsInSequence` patterns
-- **Template Function Analysis**: Maps complete template dependency chains across files
+- **Sequential Test Support**: Detects and tracks `acceptance.RunTestsInSequence` patterns via AST parsing
+- **Template Function Analysis**: Maps complete template dependency chains across files through AST call graph resolution
 
 ### Database Mode (Query Existing Data)
 - **Fast Query Operations**: Analyze previously discovered data in seconds, not minutes
@@ -31,7 +34,6 @@ A high-performance **database-driven** Terraform test analysis tool that identif
 - **Multiple Query Types**: Direct references, indirect references (includes templates and sequential patterns), or all combined
 - **Visual Blast Radius Trees**: Rich Unicode tree diagrams mapping complete dependency chains
   - Sequential test entry points with nested groups and keys
-  - Template function call chains with multi-level indirection
   - Color-coded output with automatic VS Code theme detection
   - Professional box-drawing characters for clear hierarchy visualization
 - **Data Exploration**: Perfect for analysis, reporting, and understanding test relationships
@@ -51,10 +53,10 @@ cd terraform-terracorder
 .\scripts\terracorder.ps1 -ResourceName "azurerm_virtual_network" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
 
 # Run Database Mode (query existing data)
-.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowDirectReferences
+.\scripts\terracorder.ps1 -DatabaseDirectory ".\output" -ShowDirectReferences
 
 # Run Database Mode (view available options)
-.\scripts\terracorder.ps1 -DatabaseDirectory "output"
+.\scripts\terracorder.ps1 -DatabaseDirectory ".\output"
 
 # Specify custom export directory
 .\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm" -ExportDirectory "C:\analysis\output"
@@ -67,6 +69,8 @@ If you prefer not to clone, you can download the required files manually:
 New-Item -Path "terracorder" -ItemType Directory
 New-Item -Path "terracorder\modules" -ItemType Directory
 New-Item -Path "terracorder\scripts" -ItemType Directory
+New-Item -Path "terracorder\tools" -ItemType Directory
+New-Item -Path "terracorder\tools\replicode" -ItemType Directory
 
 # Download main script
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/scripts/terracorder.ps1" -OutFile "terracorder\scripts\terracorder.ps1"
@@ -76,20 +80,27 @@ $modules = @(
     "Database.psm1",
     "DatabaseMode.psm1",
     "FileDiscovery.psm1",
-    "PatternAnalysis.psm1",
-    "ProcessingCore.psm1",
-    "ReferencesProcessing.psm1",
-    "RelationalQueries.psm1",
-    "SequentialProcessing.psm1",
-    "TemplateProcessing.psm1",
-    "TemplateProcessingStrategies.psm1",
-    "TestFunctionProcessing.psm1",
-    "TestFunctionStepsProcessing.psm1",
+    "ASTImport.psm1",
+    "Prerequisites.psm1",
     "UI.psm1"
 )
 
 foreach ($module in $modules) {
     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/modules/$module" -OutFile "terracorder\modules\$module"
+}
+
+# Download Replicode AST analyzer (choose based on your OS)
+# Windows
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/tools/replicode/replicode.exe" -OutFile "terracorder\tools\replicode\replicode.exe"
+
+# Linux/macOS (uncomment the line below and comment out Windows line above)
+# Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/tools/replicode/replicode" -OutFile "terracorder/tools/replicode/replicode"
+# chmod +x terracorder/tools/replicode/replicode
+
+# Download Replicode source files (optional - for building from source)
+$replicodeFiles = @("main.go", "patterns.go", "go.mod", "GNUMakefile", "Build.ps1", "README.md")
+foreach ($file in $replicodeFiles) {
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/WodansSon/terraform-terracorder/main/tools/replicode/$file" -OutFile "terracorder\tools\replicode\$file"
 }
 
 # Run TerraCorder
@@ -119,11 +130,8 @@ cd terracorder
 # Show indirect references with visual tree diagrams (includes templates and sequential patterns)
 .\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowIndirectReferences
 
-# Show all reference types combined (complete blast radius analysis)
-.\scripts\terracorder.ps1 -DatabaseDirectory "output" -ShowAllReferences
-
 # Use custom database location
-.\scripts\terracorder.ps1 -DatabaseDirectory "C:\analysis\subnet" -ShowAllReferences
+.\scripts\terracorder.ps1 -DatabaseDirectory "C:\analysis\subnet" -ShowIndirectReferences
 ```
 
 ### Visual Blast Radius Trees
@@ -133,21 +141,72 @@ Database Mode includes **rich visual tree diagrams** that map complete dependenc
 - **Sequential test visualization**: Shows entry points, groups, keys, and referenced functions
 - **Template dependency mapping**: Displays indirect configuration chains across files
 
+#### Understanding Reference Type Labels
+
+When viewing indirect references, TerraCorder uses **visual notation and minimal suffixes** for intuitive understanding:
+
+**Visual Indicators:**
+- **Same file reference**: Shows line number only (e.g., `Config: r.basic`)
+  - Line number indicates internal reference within the same test file
+  - No arrow needed - simplest case
+
+- **Cross-file reference**: Shows `calls` notation (e.g., `Config: r.method calls r.template`)
+  - Indicates the template calls another template in a different file
+  - Clear semantic meaning: one function calls another
+
+- **Line numbers**: Function definitions show line numbers (e.g., `Function: 2276: testAccExample_basic`)
+  - Helps locate the exact function in source files
+  - Missing line numbers indicate external references
+
+**Explicit Suffixes (Comment Style):**
+
+Only architecturally significant information is shown as comment-style suffixes:
+
+- **// EXTERNAL_REFERENCE**: Target function is **outside the current analysis scope**
+  - Example: `Config: r.template calls // EXTERNAL_REFERENCE`
+  - Common in sequential tests referencing functions from other resource test files
+  - Marked as external since the full definition isn't in the current database
+  - Indicates you may need to analyze additional resources
+
+- **// CROSS_SERVICE**: Dependency crosses **Azure service boundaries**
+  - Example: Config: r.basic // CROSS_SERVICE: \`monitor\` calls \`network\`
+  - The test is in one service but references a resource owned by another service
+  - Shows which service calls which for clear cross-team visibility
+  - Important for understanding cross-team dependencies and coordination needs
+  - Can appear with same-file or cross-file references
+  - Gracefully shows "UNKNOWN" if service information unavailable
+
+**Why This Design:**
+- **Visual clarity**: `calls` notation and line numbers convey structure without redundant labels
+- **Focus on what matters**: Only show explicit labels for architecturally significant information
+- **Intuitive**: Comment-style `//` syntax is familiar to developers
+- **Scannable**: Easy to quickly identify cross-service dependencies (highest risk)
+
+**Impact Assessment:**
+- Same-file references are **safest** to modify (isolated, single file impact)
+- Cross-file references require **checking intermediate templates** (multi-file impact)
+- Cross-service references may require **coordination with other teams** (cross-boundary impact)
+- External references indicate you may need to **analyze additional resources** for complete picture
+
 ### Database Exports
 ```powershell
-# TerraCorder automatically exports 12 CSV tables to the output directory:
-# - Resources.csv                  : Master resource table (Azure resource being analyzed)
-# - Services.csv                   : All Azure services discovered
+# TerraCorder automatically exports 14 CSV tables to the output directory:
+# - DirectResourceReferences.csv   : Direct resource usage
 # - Files.csv                      : All test files analyzed
+# - IndirectConfigReferences.csv   : Indirect template dependencies
+# - ReferenceTypes.csv             : Reference type lookup table
+# - ResourceRegistrations.csv      : Master mapping of ALL resources to owning services (~1,038 resources)
+# - Resources.csv                  : Terraform resources being analyzed (with FK to ResourceRegistrations)
+# - SequentialReferences.csv       : Sequential test relationships
+# - Services.csv                   : All Azure services discovered
 # - Structs.csv                    : All test resource structs found
-# - TestFunctions.csv              : All test functions discovered
-# - TestFunctionSteps.csv          : Individual test steps and configurations
+# - TemplateCallChain.csv          : Template-to-template function calls
 # - TemplateFunctions.csv          : Template/configuration methods
 # - TemplateReferences.csv         : Template method calls in tests
-# - DirectResourceReferences.csv   : Direct resource usage
-# - IndirectConfigReferences.csv   : Indirect template dependencies
-# - SequentialReferences.csv       : Sequential test relationships
-# - ReferenceTypes.csv             : Reference type lookup table
+# - TestFunctions.csv              : All test functions discovered
+# - TestFunctionSteps.csv          : Individual test steps and configurations
+
+# Plus: go_test_commands.txt       : Generated test commands for CI/CD
 
 # Default location: ./output/*.csv
 # Access via: -ExportDirectory parameter
@@ -168,93 +227,79 @@ $subnetTests = $tests | Where-Object { $_.FunctionName -like "*Subnet*" }
 
 ## Real-World Performance
 
-TerraCorder uses multi-threaded processing for maximum performance:
+TerraCorder uses AST semantic analysis for comprehensive dependency detection:
 
 ### Example: `azurerm_resource_group` Analysis
 ```
-Phase 1: File Discovery               : 2,695 files found, 1,277 relevant in 4,826 ms
-Phase 2: Multi-Threaded File Reading  : 8 threads, 8,473 functions found in 2,406 ms
-Phase 3: Sequential Pattern Detection : 24 additional patterns in 1,621 ms
-Phase 4: Database Population          : 1,282 files, 8,591 steps in 35,584 ms
-Phase 5: Reference Processing         : 26,771 direct, 12,700 config refs in 8,468 ms
-Phase 6: Sequential References        : 273 sequential links in 60 ms
-Phase 7: Test Command Generation      : 127 services in 533 ms
-Phase 8: Database Export              : 12 tables in 489 ms
+Database Initialization           : 1,045 resource registrations in 1,700 ms
+Phase 1: File Discovery           : 2,672 files found, 1,262 relevant in 3,921 ms
+Phase 2: AST Analysis & DB Import : 8,496 tests, 9,157 configs, 24,773 refs in 59,125 ms
+Phase 3: CSV Export               : 14 tables exported in 3,599 ms
+Phase 4: Test Command Generation  : 127 services in 1,983 ms
 
-Total Execution Time                  : 54.3 seconds
+Total Execution Time              : 70.9 seconds
 ```
 
 ### Database Size: `azurerm_kubernetes_cluster`
 ```
-Services Table                        : 5 services
-Files Table                           : 22 files
-Structs Table                         : 16 structs
-TestFunctions Table                   : 322 test functions
-TestFunctionSteps Table               : 502 test steps
-TemplateFunctions Table               : 333 template functions
-TemplateReferences Table              : 501 template calls
-DirectResourceReferences Table        : 910 direct references
-IndirectConfigReferences Table        : 238 indirect references
-SequentialReferences Table            : 0 sequential links
-ReferenceTypes Table                  : 13 reference types
+Services                 : 5 services
+Files                    : 22 files
+Structs                  : 16 structs
+TestFunctions            : 320 test functions
+TestFunctionSteps        : 500 test steps
+TemplateFunctions        : 332 template functions
+TemplateReferences       : 500 template calls
+DirectResourceReferences : 428 direct references
+IndirectConfigReferences : 500 indirect references
+SequentialReferences     : 0 sequential links
+TemplateCallChain        : 102 template-to-template calls
+ReferenceTypes           : 15 reference types
+ResourceRegistrations    : 1,045 resource-to-service mappings
 ```
 
 ## How It Works
 
-### Discovery Mode - 8-Phase Database-Driven Analysis
+### Discovery Mode - 3-Phase AST-Driven Analysis
 
-TerraCorder uses an **8-phase approach** to build the complete test dependency database:
+TerraCorder uses a **streamlined 3-phase approach** with AST (Abstract Syntax Tree) semantic analysis:
 
 #### Phase 1: File Discovery and Filtering
 - Discovers all `*_test.go` and `*_resource.go` files in `internal/services/`
 - Filters to files containing the target resource name
 - Uses fast string matching for initial filtering
+- Identifies sequential test patterns and additional test files
 
-#### Phase 2: Multi-Threaded File Reading and Categorization
-- Parallel processing with up to 8 threads
-- Reads and categorizes files based on test patterns
-- Real-time progress tracking with thread-safe updates
-
-#### Phase 3: Sequential Test Pattern Detection
-- Identifies `acceptance.RunTestsInSequence` patterns
-- Discovers additional test files through sequential relationships
-
-#### Phase 4: Database Population
-- Multi-threaded population of core database tables
-- Creates Services, Files, Structs, TestFunctions records
-- Establishes foreign key relationships
-
-#### Phase 5: Resource and Configuration Reference Processing
-- Tracks direct resource usage (DirectResourceReferences)
-- Analyzes template functions (TemplateFunctions)
-- Maps template calls (TemplateReferences)
-- Resolves indirect dependencies (IndirectConfigReferences)
-
-#### Phase 6: Sequential References Population
-- Links sequential test entry points to referenced functions
-- Updates TestFunctions with entry point relationships
-- Builds SequentialReferences table
+#### Phase 2: AST Analysis and Database Import
+- **Replicode** performs deep syntactic parsing of all discovered files
+- Extracts complete metadata through semantic analysis (not regex pattern matching):
+  - Test function signatures and structures
+  - Resource struct declarations
+  - Template function definitions
+  - Function call graphs and dependencies
+  - Direct and indirect resource references
+  - Sequential test relationships
+- Imports AST metadata into normalized database tables
+- Creates all records: Services, Files, Structs, TestFunctions, TemplateReferences, etc.
+- Establishes all foreign key relationships
 - **Creates external stub records** for cross-resource sequential references
   - Maintains referential integrity when sequential tests reference functions from other resources
   - Stubs marked with `Line = 0`, `FunctionBody = "EXTERNAL_REFERENCE"`, and `ReferenceTypeId = 10`
   - Ensures complete sequential test structure is visible in blast radius analysis
+- Generates optimized `go test` commands grouped by Azure service
+- Single-pass processing with real-time progress tracking
 
-#### Phase 7: Go Test Command Generation
-- Groups tests by Azure service
-- Generates optimized `go test` commands
-- Exports `go_test_commands.txt` file
-
-#### Phase 8: Database CSV Export
-- Exports all 12 database tables to CSV
+#### Phase 3: CSV Export
+- Exports all 14 database tables to CSV files
 - Maintains proper column headers even for empty tables
-- Provides comprehensive dataset for analysis
+- Provides comprehensive dataset for analysis and reporting
+- Exports `go_test_commands.txt` file for CI/CD integration
 
 ### Database Mode - Fast Query Operations
 
 Database Mode loads previously exported CSV files for instant analysis:
 
 #### Database Initialization
-- Imports all 12 CSV tables into in-memory database
+- Imports all 14 CSV tables into in-memory database
 - Rebuilds indexes and foreign key relationships
 - Displays comprehensive statistics (typically 5-10 seconds)
 
@@ -263,10 +308,8 @@ Database Mode loads previously exported CSV files for instant analysis:
 - **ShowDirectReferences**: Display all direct resource usage and attribute references
 - **ShowIndirectReferences**: Display template dependencies and sequential test chains with **visual tree diagrams**
   - Sequential test entry points organized by groups and keys
-  - Template function call chains showing multi-level dependencies
-  - Color-coded tree structure with professional Unicode box-drawing
+  - Color-coded tree structure
   - External reference markers for cross-resource dependencies
-- **ShowAllReferences**: Display complete blast radius analysis (Direct + Indirect) with full visual output
 
 #### Benefits
 - **Speed**: Query operations complete in seconds vs minutes for Discovery Mode
@@ -275,184 +318,155 @@ Database Mode loads previously exported CSV files for instant analysis:
 - **Reporting**: Generate reports from structured data
 - **Progressive Discovery**: View options first, then choose your analysis
 
+### Replicode - Go-Based Semantic Parser
+
+TerraCorder uses **Replicode**, a Go AST (Abstract Syntax Tree) analyzer for accurate semantic analysis:
+
+#### Why AST Over Regex?
+- **100% Accuracy**: AST parsing understands Go syntax semantically, not just text patterns
+- **No False Positives**: Distinguishes between function definitions, calls, and comments
+- **Call Graph Resolution**: Tracks actual function call relationships through syntax trees
+- **Single-Pass Efficiency**: Extracts all metadata in one pass per file
+- **Reliable Detection**: Identifies test functions, structs, templates, and dependencies accurately
+
+#### How It Works
+1. **AST Parsing**: Go's `go/parser` package builds complete syntax trees
+2. **Semantic Analysis**: Walks AST nodes to identify:
+   - Function declarations (`func (r ResourceType) FunctionName()`)
+   - Struct definitions (`type ResourceType struct`)
+   - Function calls and call graphs
+   - Test function patterns (`func TestAcc*`)
+   - Template function relationships
+3. **Metadata Export**: Outputs structured JSON with all discovered elements
+4. **PowerShell Import**: ASTImport.psm1 loads JSON into normalized database
+
+#### Location
+- Pre-built binary: `tools/replicode/replicode` (Linux/macOS) or `replicode.exe` (Windows)
+- Source code: `tools/replicode/*.go`
+- Build instructions: `tools/replicode/README.md`
+
+**Note**: Replicode is automatically invoked by TerraCorder during Discovery Mode Phase 2. You don't need to run it manually unless you're debugging or developing.
+
 ## Database Schema
 
-TerraCorder uses a **normalized relational database** with 12 tables:
+TerraCorder uses a **normalized relational database** with 14 tables:
 
 | Table | Purpose | Key Fields |
 |-------|---------|------------|
-| `Resources` | Master resource table | ResourceRefId (PK), ResourceName |
-| `Services` | Azure services | ServiceRefId (PK), Name, ResourceRefId (FK) |
+| `Resources` | Terraform resources being analyzed | ResourceRefId (PK), ResourceName, ResourceRegistrationRefId (FK) |
+| `ResourceRegistrations` | Master mapping of ALL resources to owning services | ResourceRegistrationRefId (PK), ServiceRefId (FK), ResourceName |
+| `Services` | Azure services | ServiceRefId (PK), Name |
 | `Files` | Test files | FileRefId (PK), FilePath, ServiceRefId (FK) |
-| `Structs` | Test resource structs | StructRefId (PK), StructName, FileRefId (FK), ResourceRefId (FK) |
-| `TestFunctions` | Test functions | TestFunctionRefId (PK), FunctionName, FileRefId (FK), StructRefId (FK), ResourceRefId (FK) |
+| `Structs` | Test resource structs | StructRefId (PK), StructName, FileRefId (FK) |
+| `TestFunctions` | Test functions | TestFunctionRefId (PK), FunctionName, FileRefId (FK), StructRefId (FK) |
 | `TestFunctionSteps` | Test steps/configs | TestFunctionStepRefId (PK), TestFunctionRefId (FK), ReferenceTypeId (FK) |
-| `TemplateFunctions` | Template methods | TemplateFunctionRefId (PK), TemplateFunctionName, StructRefId (FK), ResourceRefId (FK) |
+| `TemplateFunctions` | Template methods | TemplateFunctionRefId (PK), TemplateFunctionName, StructRefId (FK) |
 | `TemplateReferences` | Template calls | TemplateReferenceRefId (PK), TestFunctionRefId (FK), TemplateReference |
-| `DirectResourceReferences` | Direct usage | DirectRefId (PK), FileRefId (FK), ReferenceTypeId (FK) |
+| `DirectResourceReferences` | Direct usage | DirectRefId (PK), TemplateFunctionRefId (FK), ReferenceTypeId (FK) |
 | `IndirectConfigReferences` | Template deps | IndirectRefId (PK), TemplateReferenceRefId (FK), SourceTemplateFunctionRefId (FK) |
 | `SequentialReferences` | Sequential links | SequentialRefId (PK), EntryPointFunctionRefId (FK), ReferencedFunctionRefId (FK) |
+| `TemplateCallChain` | Template→template calls | TemplateCallChainRefId (PK), SourceTemplateFunctionRefId (FK), TargetTemplateFunctionRefId (FK), ReferenceTypeId (FK) |
 | `ReferenceTypes` | Reference lookup | ReferenceTypeId (PK), ReferenceTypeName |
 
-**Note**: The `Resources` table is the master table containing the Azure resource being analyzed (e.g., "azurerm_virtual_network"). Four tables (Services, Structs, TestFunctions, TemplateFunctions) contain `ResourceRefId` foreign keys linking them to the resource under analysis.
+**Note**: The `Resources` table contains the specific resources being analyzed in the current run (1-N rows), with a foreign key to `ResourceRegistrations` which contains the master mapping of ALL ~1,038 resources to their owning services. This separation enables resource ownership tracking for cross-service dependency analysis.
 
 ## Sample Output
 
 ### Console Output
 ```
 ============================================================
- Terra-Corder - Database Initialization
+ Terra-Corder v3.0.0 - Database Initialization
 ============================================================
  [INFO] Creating Database Tables
+ [INFO] Imported 1045 Resource Registrations
  [INFO] Populating ReferenceTypes Table
-Database Initialization: Completed in 15 ms
+Database Initialization: Completed in 1700 ms
 
 Phase 1: File Discovery and Filtering...
- [INFO] Discovered 3,421 Test Files
- [INFO] Filtered To 127 Relevant Files
-Phase 1: Completed in 245 ms
+ [INFO] Found 2672 Test Files
+ [INFO] Filtered 1008 Irrelevant Files, 1664 Test Files To Analyze
+ [INFO] Processing 1664 Files With 8 Threads
+ [INFO] Found 1262 Test Files Containing The Resource
+Phase 1: Completed in 3921 ms
 
-Phase 2: Reading and Categorizing Relevant Test Files...
- [INFO] Processing file 127 of 127 (100%) - Complete
- [INFO] Processed 127 Files Using 8 Threads
-Phase 2: Completed in 1,234 ms
+Phase 2: Replicode Analysis and Database Import...
+ [INFO] Processing 1262 Test Files With Replicode...
+ [INFO] Processing Files 1262 of 1262 (100%) - Complete
+ [INFO] Importing Replicode Data Into Database...
+ [INFO] Replicode Import Complete: 1262/1262 Files Processed Successfully
+ [INFO] Scanning For Additional Sequential Test Entry Points...
+ [INFO] Found 2 Additional Sequential Test Files
+ [INFO] Replicode Analysis Summary:
+ [INFO]   Registry  : 1045 Resource-to-Service Mappings
+ [INFO]   Structure : 131 Services, 1264 Files, 1199 Structs
+ [INFO]   Functions : 8496 Tests, 9157 Configuration
+ [INFO]   References: 12561 Steps, 24773 Direct, 4097 Calls
+Phase 2: Completed in 59125 ms
 
-Phase 3: Finding Additional Sequential Test Patterns...
- [INFO] Found 12 Additional Sequential Test Files
-Phase 3: Completed in 15 ms
+Phase 3: Exporting Database to CSV...
+ [INFO] Exported: 14 Tables
+Phase 3: Completed in 3599 ms
 
-Phase 4: Populating Database Tables...
- [INFO] Populating database 139 of 139 (100%) - Complete
- [INFO] Populated 139 Files Using 8 Threads
-Phase 4: Completed in 456 ms
-
-Phase 5: Populating Resource and Configuration References...
- [INFO] Found 89 Direct Resource References
- [INFO] Found 234 Test Configuration References
- [INFO] Processing Test Configuration Indirect References
- [INFO] Created 567 Indirect Configuration References
-Phase 5: Completed in 789 ms
-
-Phase 6: Populating SequentialReferences table...
- [INFO] No Sequential Test Functions Detected - Skipping Sequential Processing
-Phase 6: Completed in 3 ms
-
-Phase 7: Generating go test commands...
- [INFO] Generated Test Commands For 1 Service
+Phase 4: Generating Go Test Commands...
+ [INFO] Generated Test Commands For 127 Services
  [INFO] Exported: go_test_commands.txt
-Phase 7: Completed in 46 ms
-
-Phase 8: Exporting Database CSV Files...
- [INFO] Exported: 12 Tables
-Phase 8: Completed in 61 ms
+Phase 4: Completed in 1983 ms
 
 ============================================================
  Required Acceptance Test Execution:
 ============================================================
 
-  Service Name: resourcegroup
-    go test -timeout 30000s -v ./internal/services/resourcegroup -run "TestAccResourceGroup_"
+  Service Name: resource
+    go test -timeout 30000s -v ./internal/services/resource -run "TestAccDataSourceAzureRMResourceGroup_|TestAccResourceGroup_|..."
 
-Total Execution Time: 3705 ms (3.7 seconds)
+Total Execution Time: 70948 ms (70.9 seconds)
 ```
 
 ### Visual Blast Radius Analysis (Database Mode)
 
 Database Mode provides **rich visual tree diagrams** for dependency analysis:
 
-#### Sequential Test Chain Visualization
+#### Indirect References with Visual Tree Diagrams
 ```
-============================================================
-  Sequential Call Chain:
-============================================================
- Entry Point: 650: TestAccKeyVaultManagedHardwareSecurityModule
-  │
-  ├──┬─► Sequential Group: dataSource
-  │  │
-  │  └─┬─► Key     : basic
-  │    └─► Function: External Reference: testAccDataSourceKeyVaultManagedHardwareSecurityModule_basic
-  │
-  ├──┬─► Sequential Group: keys
-  │  │
-  │  ├─┬─► Key     : basic
-  │  │ └─► Function: External Reference: testAccKeyVaultMHSMKey_basic
-  │  │
-  │  ├─┬─► Key     : complete
-  │  │ └─► Function: External Reference: testAccKeyVaultMHSMKey_complete
-  │  │
-  │  ├─┬─► Key     : data_source
-  │  │ └─► Function: External Reference: testAccKeyVaultMHSMKeyDataSource_basic
-  │  │
-  │  ├─┬─► Key     : purge
-  │  │ └─► Function: External Reference: testAccKeyVaultHSMKey_purge
-  │  │
-  │  ├─┬─► Key     : rotationPolicy
-  │  │ └─► Function: External Reference: testAccMHSMKeyRotationPolicy_all
-  │  │
-  │  └─┬─► Key     : softDeleteRecovery
-  │    └─► Function: External Reference: testAccKeyVaultHSMKey_softDeleteRecovery
-  │
-  ├──┬─► Sequential Group: resource
-  │  │
-  │  ├─┬─► Key     : basic
-  │  │ └─► Function: 2276: testAccKeyVaultManagedHardwareSecurityModule_basic
-  │  │
-  │  ├─┬─► Key     : complete
-  │  │ └─► Function: 4453: testAccKeyVaultManagedHardwareSecurityModule_complete
-  │  │
-  │  ├─┬─► Key     : download
-  │  │ └─► Function: 2739: testAccKeyVaultManagedHardwareSecurityModule_download
-  │  │
-  │  └─┬─► Key     : update
-  │    └─► Function: 3751: testAccKeyVaultManagedHardwareSecurityModule_updateAndRequiresImport
-  │
-  ├──┬─► Sequential Group: roleAssignments
-  │  │
-  │  ├─┬─► Key     : builtInRole
-  │  │ └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleAssignment_builtInRole
-  │  │
-  │  └─┬─► Key     : customRole
-  │    └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleAssignment_customRole
-  │
-  ├──┬─► Sequential Group: roleDefinitionDataSource
-  │  │
-  │  └─┬─► Key     : basic
-  │    └─► Function: External Reference: testAccDataSourceKeyVaultManagedHardwareSecurityModuleRoleDefinition_basic
-  │
-  └──┬─► Sequential Group: roleDefinitions
-     │
-     └─┬─► Key     : basic
-       └─► Function: External Reference: testAccKeyVaultManagedHardwareSecurityModuleRoleDefinition_basic
-```
+File: ./internal/services/cosmos/cosmosdb_cassandra_resource_test.go
+   7 Sequential Key References
 
-#### Template Function Dependency Chain
-```
-============================================================
-  Template Function Call Chain:
-============================================================
- Entry Point: 664: TestAccSiteRecoveryFabric_basic
-  │
-  └──► Template: 1405: (r SiteRecoveryFabricResource).basic
+   ============================================================
+     Sequential Call Chain:
+   ============================================================
+
+      Entry Point: 12: TestAccCassandraSequential
        │
-       └──► Template: 1413: (r SiteRecoveryFabricResource).template
-            │
-            └──► Function: 1499: testAccSiteRecoveryFabric_basicConfig
+       ├──┬─► Group: "cluster"
+       │  ├─┬─► Key     : "basic"
+       │  │ └─► Function: testAccCassandraCluster_basic : EXTERNAL_REFERENCE
+       │  │
+       │  ├─┬─► Key     : "complete"
+       │  │ └─► Function: testAccCassandraCluster_complete : EXTERNAL_REFERENCE
+       │  │
+       │  ├─┬─► Key     : "requiresImport"
+       │  │ └─► Function: testAccCassandraCluster_requiresImport : EXTERNAL_REFERENCE
+       │  │
+       │  └─┬─► Key     : "update"
+       │    └─► Function: testAccCassandraCluster_update : EXTERNAL_REFERENCE
+       │
+       └──┬─► Group: "dataCenter"
+          ├─┬─► Key     : "basic"
+          │ └─► Function: 21: testAccCassandraDatacenter_basic
+          │
+          ├─┬─► Key     : "update"
+          │ └─► Function: 38: testAccCassandraDatacenter_update
+          │
+          └─┬─► Key     : "updateSku"
+            └─► Function: 60: testAccCassandraDatacenter_updateSku
 ```
-
-#### Tree Symbols Explained
-- `│` Vertical pipe: Continues the tree structure downward
-- `├` Tee connector: Branches to a sibling (more items follow)
-- `└` Corner connector: Last item in a group (no more siblings)
-- `┬` Tee-down connector: Parent with children below
-- `►` Right arrow: Points to the referenced item
-- `─` Horizontal line: Connects items at the same level
 
 #### Color Coding (Terminal ANSI Support Required)
 - **Entry Points**: Highlighted function names
 - **Sequential Groups**: Colored group names (e.g., "dataSource", "keys", "resource")
 - **Line Numbers**: Distinct color for quick reference
 - **External References**: Marked to show cross-resource dependencies
-- **Theme Detection**: Automatically adapts to VS Code light/dark themes
+- **Color Theme**: Uses the VS Code dark theme+
 
 **Note**: Visual tree diagrams require terminal ANSI color support. Works best in:
 - Windows Terminal
@@ -461,19 +475,21 @@ Database Mode provides **rich visual tree diagrams** for dependency analysis:
 
 ### CSV Export Files (in output directory)
 ```
-Resources.csv                        - Master resource table (e.g., azurerm_virtual_network)
-Services.csv                         - All Azure services
-Files.csv                            - All test files
-Structs.csv                          - Test resource structs
-TestFunctions.csv                    - Test function records
-TestFunctionSteps.csv                - Individual test steps
-TemplateFunctions.csv                - Template methods
-TemplateReferences.csv               - Template method calls
-DirectResourceReferences.csv         - Direct resource usage
-IndirectConfigReferences.csv         - Template dependencies
-SequentialReferences.csv             - Sequential test links
-ReferenceTypes.csv                   - Reference type lookup
-go_test_commands.txt                 - Generated test commands
+Resources.csv                - Terraform resources being analyzed (with FK to ResourceRegistrations)
+ResourceRegistrations.csv    - Master mapping of ALL resources to owning services (~1,038 resources)
+Services.csv                 - All Azure services
+Files.csv                    - All test files
+Structs.csv                  - Test resource structs
+TestFunctions.csv            - Test function records
+TestFunctionSteps.csv        - Individual test steps
+TemplateFunctions.csv        - Template methods
+TemplateReferences.csv       - Template method calls
+DirectResourceReferences.csv - Direct resource usage
+IndirectConfigReferences.csv - Template dependencies
+SequentialReferences.csv     - Sequential test links
+TemplateCallChain.csv        - Template-to-template function calls
+ReferenceTypes.csv           - Reference type lookup
+go_test_commands.txt         - Generated test commands
 ```
 
 ## Parameters
@@ -491,29 +507,59 @@ go_test_commands.txt                 - Generated test commands
 | `-DatabaseDirectory` | **Yes** | Directory containing CSV database files | - | `"output"` or `"C:\analysis\output"` |
 | `-ShowDirectReferences` | No | Display direct resource references | Shows available options | Switch parameter |
 | `-ShowIndirectReferences` | No | Display indirect references (templates + sequential) | Shows available options | Switch parameter |
-| `-ShowAllReferences` | No | Display all reference types (complete analysis) | Shows available options | Switch parameter |
 
 **Note**: If no Show parameter is specified, Database Mode displays available analysis options and examples.
 
 ## Troubleshooting
 
-### PowerShell Version Issues
+### Prerequisites Validation
 
-TerraCorder requires **PowerShell Core 7.0 or later**. You'll see a clear error if your version is unsupported:
+TerraCorder requires **PowerShell Core 7.0 or later** and **Go 1.21 or later**. Prerequisites are automatically validated on startup.
 
+**Successful validation shows:**
 ```
-ERROR: PowerShell Core 7.0 or later required.
+Validating PowerShell Prerequisites:
+ PowerShell Edition  : Core
+ PowerShell Version  : 7.5.3
+ Go Installation     : Go 1.24.5
+ Status              : Supported
+ Threading           : 8 threads
+```
+
+**If prerequisites are not met, you'll see a detailed error:**
+```
+Validating PowerShell Prerequisites:
+ PowerShell Edition  : Desktop
+ PowerShell Version  : 5.1.19041.5247
+ Go Installation     : Not Found
+ Status              : Unsupported
+
+ERROR: Missing required dependencies.
 
 Current environment:
-  Edition: Desktop
-  Version: 5.1.19041.5247
+  PowerShell Edition: Desktop
+  PowerShell Version: 5.1.19041.5247
+  Go Installation:    Not Found
 
 Required:
-  Edition: Core
-  Version: 7.0 or later
+  PowerShell Edition: Core
+  PowerShell Version: 7.0 or later
+  Go Installation:    1.21 or later
+
+Go is required to run Replicode.
+Install Go 1.21 or later from: https://go.dev/dl/
+
+Install PowerShell Core 7.0 or later from: https://github.com/PowerShell/PowerShell
 ```
 
-**Solution**: Install PowerShell Core 7.x from https://github.com/PowerShell/PowerShell
+**Solutions:**
+1. **PowerShell**: Install PowerShell Core 7.x from https://github.com/PowerShell/PowerShell
+2. **Go**: Install Go 1.21+ from https://go.dev/dl/
+3. Verify installations:
+   - `pwsh --version` (should show 7.0 or higher)
+   - `go version` (should show 1.21 or higher)
+4. Ensure both are in your PATH
+5. After installing, restart your terminal and try again
 
 ### Repository Path Issues
 
@@ -537,9 +583,9 @@ Please verify:
 ### Performance Optimization
 
 For large repositories:
-- **Thread count** is automatically optimized (2-8 threads based on CPU cores)
-- **Memory usage** peaks during Phase 2 (file reading) and Phase 4 (database population)
-- **Disk I/O** is highest during Phase 8 (CSV export)
+- **AST parsing** performs single-pass semantic analysis per file (Phase 2)
+- **Memory usage** peaks during Phase 2 (AST analysis and database import)
+- **Disk I/O** is highest during Phase 3 (CSV export)
 
 To improve performance:
 - Use SSD storage for the repository and export directory
@@ -574,8 +620,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Built for the Terraform AzureRM provider community
-- Designed for comprehensive test dependency analysis
-- Optimized for multi-threaded performance on modern hardware
+- Designed for comprehensive test dependency analysis through AST semantic analysis
+- Uses Go AST parser for accurate syntactic analysis
+- Optimized for efficient single-pass processing
 
 ---
 
@@ -589,9 +636,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Requirements
 
-- **PowerShell**: PowerShell Core 7.0 or later (required for multi-threading)
+- **PowerShell**: PowerShell Core 7.0 or later
 - **Operating System**: Windows, Linux, or macOS
 - **Memory**: Recommended 4GB+ for large repositories
+- **Go**: Go 1.16+ (for building Replicode from source, pre-built binary included)
 - **Terraform AzureRM Provider**: Source code for analysis
 - **Terminal**: ANSI color support recommended for visual tree diagrams (Windows Terminal, VS Code integrated terminal, or modern Linux/macOS terminal)
 
@@ -614,5 +662,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Selective test execution**: Run only tests affected by resource changes
 - **Batch processing**: Group tests by service for parallel execution
 - **Coverage validation**: Ensure all necessary tests are included
-
-## Troubleshooting

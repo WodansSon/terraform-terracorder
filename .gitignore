@@ -46,6 +46,8 @@ test-results/
 coverage/
 *.trx
 *.coverage
+regression-test/
+test-output/
 
 # Temporary files
 *.tmp
