@@ -105,8 +105,11 @@ try {
 # Ensure code quality
 Invoke-ScriptAnalyzer -Path "./scripts/terracorder.ps1"
 
-# Test functionality
-.\scripts\terracorder.ps1 -ResourceName "test" -Summary
+# Test functionality (Discovery Mode)
+.\scripts\terracorder.ps1 -ResourceName "azurerm_resource_group" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+# Test functionality (Database Mode)
+.\scripts\terracorder.ps1 -DatabaseDirectory ".\output" -ShowDirectReferences
 
 # Update documentation if needed
 ```
@@ -221,8 +224,11 @@ Every contribution, no matter how small, makes TerraCorder better for the entire
 git clone https://github.com/WodansSon/terraform-terracorder.git
 cd terraform-terracorder
 
-# Test
-.\scripts\terracorder.ps1 -ResourceName "test" -Summary
+# Test Discovery Mode
+.\scripts\terracorder.ps1 -ResourceName "azurerm_resource_group" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+
+# Test Database Mode
+.\scripts\terracorder.ps1 -DatabaseDirectory ".\output" -ShowDirectReferences
 
 # Quality Check
 Install-Module PSScriptAnalyzer -Force -Scope CurrentUser

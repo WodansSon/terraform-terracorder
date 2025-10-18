@@ -220,8 +220,14 @@ jobs:
         - macOS (PowerShell Core 7.x+)
 
         ### Usage
+        **Discovery Mode (initial analysis):**
         ```powershell
-        .\terracorder.ps1 -ResourceName "azurerm_subnet" -Summary
+        .\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+        ```
+
+        **Database Mode (query existing data):**
+        ```powershell
+        .\scripts\terracorder.ps1 -DatabaseDirectory ".\output" -ShowDirectReferences
         ```
 
         For full documentation, see the [README](https://github.com/WodansSon/terraform-terracorder/blob/main/README.md).

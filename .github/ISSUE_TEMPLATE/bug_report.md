@@ -45,7 +45,7 @@ A clear and concise description of what actually happened.
 
 ```powershell
 # Exact command that triggered the issue
-.\terracorder.ps1 -ResourceName "example" -Summary
+.\scripts\terracorder.ps1 -ResourceName "azurerm_example" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
 ```
 
 ## Error Messages
