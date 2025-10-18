@@ -196,7 +196,7 @@ jobs:
 
         # Create release notes with installation instructions
         cat > release_notes.md << 'EOF'
-        ## TerraCorder v${{ steps.version.outputs.version }}
+        ## v${{ steps.version.outputs.version }}
 
         EOF
 
@@ -237,7 +237,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ steps.version.outputs.version }}
-        name: TerraCorder v${{ steps.version.outputs.version }}
+        name: v${{ steps.version.outputs.version }}
         body_path: release_notes.md
         draft: false
         prerelease: false
