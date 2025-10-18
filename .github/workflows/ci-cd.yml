@@ -209,9 +209,27 @@ jobs:
         ---
 
         ### Installation
+
+        **Windows:**
         ```powershell
-        # Download and run
-        Invoke-WebRequest -Uri "https://github.com/WodansSon/terraform-terracorder/releases/download/v${{ steps.version.outputs.version }}/terracorder.ps1" -OutFile "terracorder.ps1"
+        # Download and extract the complete package
+        Invoke-WebRequest -Uri "https://github.com/WodansSon/terraform-terracorder/releases/download/v${{ steps.version.outputs.version }}/terracorder-${{ steps.version.outputs.version }}-windows.zip" -OutFile "terracorder.zip"
+        Expand-Archive -Path "terracorder.zip" -DestinationPath "C:\TerraCorder"
+        cd C:\TerraCorder
+
+        # IMPORTANT: Unblock downloaded files
+        Get-ChildItem -Path . -Recurse | Unblock-File
+        ```
+
+        **Linux/macOS:**
+        ```bash
+        # Download and extract the complete package
+        curl -L -o terracorder.tar.gz https://github.com/WodansSon/terraform-terracorder/releases/download/v${{ steps.version.outputs.version }}/terracorder-${{ steps.version.outputs.version }}-linux.tar.gz
+        tar -xzf terracorder.tar.gz -C ~/terracorder
+        cd ~/terracorder
+
+        # Make Replicode executable
+        chmod +x tools/replicode/replicode
         ```
 
         ### Platform Support
