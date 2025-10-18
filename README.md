@@ -42,8 +42,38 @@ A high-performance **AST-based semantic analysis tool** that identifies all test
 
 ## Quick Start
 
-### Clone and Use (Recommended)
-TerraCorder requires the modules directory to function properly. The easiest way to get started is to clone the repository:
+### Download Release Package (Recommended)
+Download the latest release package which includes everything you need:
+
+```powershell
+# Download and extract (Windows)
+Invoke-WebRequest -Uri "https://github.com/WodansSon/terraform-terracorder/releases/latest/download/terracorder-3.0.0-windows.zip" -OutFile "terracorder.zip"
+Expand-Archive -Path "terracorder.zip" -DestinationPath "C:\TerraCorder"
+cd C:\TerraCorder
+
+# IMPORTANT: Unblock downloaded files (Windows only)
+Get-ChildItem -Path . -Recurse | Unblock-File
+
+# Run Discovery Mode (initial analysis)
+.\scripts\terracorder.ps1 -ResourceName "azurerm_virtual_network" -RepositoryDirectory "C:\path\to\terraform-provider-azurerm"
+```
+
+**Linux/macOS:**
+```bash
+# Download and extract
+curl -L -o terracorder.tar.gz https://github.com/WodansSon/terraform-terracorder/releases/latest/download/terracorder-3.0.0-linux.tar.gz
+tar -xzf terracorder.tar.gz -C ~/terracorder
+cd ~/terracorder
+
+# Make Replicode executable
+chmod +x tools/replicode/replicode
+
+# Run Discovery Mode
+pwsh ./scripts/terracorder.ps1 -ResourceName "azurerm_virtual_network" -RepositoryDirectory "/path/to/terraform-provider-azurerm"
+```
+
+### Clone from Git (Alternative)
+If you prefer to clone the repository:
 ```powershell
 # Clone the repository
 git clone https://github.com/WodansSon/terraform-terracorder.git
@@ -511,6 +541,36 @@ go_test_commands.txt         - Generated test commands
 **Note**: If no Show parameter is specified, Database Mode displays available analysis options and examples.
 
 ## Troubleshooting
+
+### PowerShell Execution Policy (Windows)
+
+If you download the release package and see this error:
+```
+File C:\TerraCorder\scripts\terracorder.ps1 cannot be loaded. The file is not digitally signed.
+```
+
+**Solution 1: Unblock the downloaded files (Recommended)**
+```powershell
+# Unblock all files in the TerraCorder directory
+cd C:\TerraCorder
+Get-ChildItem -Path . -Recurse | Unblock-File
+```
+
+**Solution 2: Temporarily bypass execution policy**
+```powershell
+# Run the script with bypass (one-time)
+powershell -ExecutionPolicy Bypass -File .\scripts\terracorder.ps1 -ResourceName "azurerm_subnet" -RepositoryDirectory "C:\path\to\repo"
+```
+
+**Solution 3: Change your execution policy (Permanent)**
+```powershell
+# Allow running local unsigned scripts (requires Administrator)
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**Why this happens:** Windows blocks scripts downloaded from the internet for security. The `Unblock-File` command removes this restriction.
+
+**Security Note:** This is standard practice for open-source PowerShell tools. If you don't trust the code, you can inspect the source code in the release package or on GitHub before running `Unblock-File`. All PowerShell modules (`.psm1`) and scripts (`.ps1`) are plain text and can be reviewed with any text editor.
 
 ### Prerequisites Validation
 
