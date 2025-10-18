@@ -162,16 +162,27 @@ jobs:
         tar -czf terracorder-${{ steps.version.outputs.version }}-linux.tar.gz -C release .
         zip -r terracorder-${{ steps.version.outputs.version }}-windows.zip release/
 
-    - name: Generate Release Notes
+    - name: Generate Release Notes from CHANGELOG
       id: release_notes
       run: |
+        VERSION=${{ steps.version.outputs.version }}
+
+        # Extract release notes from CHANGELOG.md
+        awk '/^## \['$VERSION'\]/{flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md > changelog_extract.md
+
+        # Create release notes with installation instructions
         cat > release_notes.md << 'EOF'
         ## TerraCorder v${{ steps.version.outputs.version }}
 
-        ### What's New
-        - Enhanced Terraform test dependency scanning
-        - Improved cross-platform compatibility
-        - Better error handling and user experience
+        EOF
+
+        # Append extracted CHANGELOG content
+        cat changelog_extract.md >> release_notes.md
+
+        # Append installation and usage instructions
+        cat >> release_notes.md << 'EOF'
+
+        ---
 
         ### Installation
         ```powershell
