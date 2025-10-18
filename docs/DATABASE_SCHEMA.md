@@ -189,8 +189,7 @@ erDiagram
 
     Services {
         int ServiceRefId PK
-        int ResourceRefId FK
-        string Name UK
+        string ServiceName UK
     }
 
     Files {

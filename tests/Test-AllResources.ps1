@@ -147,8 +147,8 @@ for ($batchNum = 0; $batchNum -lt $batches; $batchNum++) {
             $resourceOutputDir = Join-Path $ResultsDir $Resource
             $logFile = Join-Path $LogsDir "$Resource.log"
 
-            try {
-                # Run terracorder.ps1 for this resource
+            try{
+                # PHASE 1: Run Discovery Mode for this resource
                 # Use Start-Transcript to capture Write-Host output
                 Start-Transcript -Path $logFile -Force | Out-Null
 
@@ -175,6 +175,7 @@ for ($batchNum = 0; $batchNum -lt $batches; $batchNum++) {
                     Functions = 0
                     References = 0
                     ExecutionTime = 0
+                    DatabaseModeStatus = "NotTested"
                 }
 
                 # Check for errors
@@ -202,7 +203,56 @@ for ($batchNum = 0; $batchNum -lt $batches; $batchNum++) {
                         $result.ExecutionTime = [int]$Matches[1]
                     }
 
-                    $result.Message = "Success: $($result.TestsFound) service(s), execution time: $($result.ExecutionTime)ms"
+                    $result.Message = "Discovery: $($result.TestsFound) service(s), $($result.ExecutionTime)ms"
+
+                    # PHASE 2: Test Database Mode operations (only if Discovery succeeded)
+                    if ($result.Status -eq "Success") {
+                        $dbLogFile = Join-Path $LogsDir "$Resource-dbmode.log"
+                        $dbTestsPassed = 0
+                        $dbTestsFailed = 0
+
+                        try {
+                            # Test 1: ShowDirectReferences
+                            Start-Transcript -Path $dbLogFile -Force | Out-Null
+                            try {
+                                & $ScriptPath -DatabaseDirectory $resourceOutputDir -ShowDirectReferences *>&1 | Out-Null
+                                $dbTestsPassed++
+                            } catch {
+                                $dbTestsFailed++
+                            }
+                            Stop-Transcript | Out-Null
+
+                            # Allow garbage collection between queries
+                            Start-Sleep -Seconds 2
+
+                            # Test 2: ShowIndirectReferences
+                            Start-Transcript -Path $dbLogFile -Append | Out-Null
+                            try {
+                                & $ScriptPath -DatabaseDirectory $resourceOutputDir -ShowIndirectReferences *>&1 | Out-Null
+                                $dbTestsPassed++
+                            } catch {
+                                $dbTestsFailed++
+                            }
+                            Stop-Transcript | Out-Null
+
+                            if ($dbTestsFailed -eq 0) {
+                                $result.DatabaseModeStatus = "Success"
+                                $result.Message += " | DB Mode: Both queries passed"
+                            } else {
+                                $result.DatabaseModeStatus = "Failed"
+                                $result.Message += " | DB Mode: $dbTestsFailed/2 queries failed"
+                            }
+                        }
+                        catch {
+                            $result.DatabaseModeStatus = "Error"
+                            $result.Message += " | DB Mode: Error - $($_.Exception.Message)"
+                        }
+                    }
+                    else {
+                        # Skip Database Mode tests if Discovery Mode failed
+                        $result.DatabaseModeStatus = "Skipped"
+                        $result.Message += " | DB Mode: Skipped (Discovery failed)"
+                    }
                 }
                 else {
                     $result.Status = "Error"
@@ -220,11 +270,13 @@ for ($batchNum = 0; $batchNum -lt $batches; $batchNum++) {
                     Functions = 0
                     References = 0
                     ExecutionTime = 0
+                    DatabaseModeStatus = "NotTested"
                 }
             }
         }
 
-        $arguments = [object[]]@($resource, $RepositoryDirectory, $resultsDir, $logsDir, (Join-Path $PSScriptRoot "terracorder.ps1"))
+        $scriptPath = Join-Path (Split-Path $PSScriptRoot -Parent) "scripts\terracorder.ps1"
+        $arguments = [object[]]@($resource, $RepositoryDirectory, $resultsDir, $logsDir, $scriptPath)
         $job = Start-Job -ScriptBlock $scriptBlock -ArgumentList $arguments
 
         $jobs += @{
@@ -253,6 +305,7 @@ for ($batchNum = 0; $batchNum -lt $batches; $batchNum++) {
                 Functions = 0
                 References = 0
                 ExecutionTime = 0
+                DatabaseModeStatus = "NotTested"
             }
         }
         else {
@@ -293,10 +346,24 @@ for ($batchNum = 0; $batchNum -lt $batches; $batchNum++) {
             default { "Gray" }
         }
 
+        $dbStatusColor = switch ($result.DatabaseModeStatus) {
+            "Success" { "Green" }
+            "Failed" { "Red" }
+            "Error" { "Red" }
+            "NotTested" { "Gray" }
+            default { "Gray" }
+        }
+
         Write-Host "[$completedCount/$totalResources] " -NoNewline -ForegroundColor Gray
         Write-Host $resource -NoNewline -ForegroundColor Cyan
-        Write-Host " - " -NoNewline
-        Write-Host $result.Status -ForegroundColor $statusColor
+        Write-Host " - Discovery: " -NoNewline
+        Write-Host $result.Status -NoNewline -ForegroundColor $statusColor
+        if ($result.DatabaseModeStatus -ne "NotTested") {
+            Write-Host " | DB Mode: " -NoNewline
+            Write-Host $result.DatabaseModeStatus -ForegroundColor $dbStatusColor
+        } else {
+            Write-Host ""
+        }
 
         if ($result.Status -eq "Error" -and -not $ContinueOnError) {
             Write-Host ""
@@ -320,6 +387,8 @@ Write-Host "============================================================" -Foreg
 Write-Host "  TEST SUMMARY" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
+Write-Host "  DISCOVERY MODE" -ForegroundColor Yellow
+Write-Host "  ---------------" -ForegroundColor Yellow
 Write-Host "  Total Resources Tested: " -NoNewline -ForegroundColor Gray
 Write-Host $completedCount -ForegroundColor White
 Write-Host "  Successful: " -NoNewline -ForegroundColor Gray
@@ -331,9 +400,25 @@ Write-Host $results.Failed.Count -ForegroundColor Red
 Write-Host "  Errors: " -NoNewline -ForegroundColor Gray
 Write-Host $results.Errors.Count -ForegroundColor Red
 Write-Host ""
-Write-Host "  Success Rate: " -NoNewline -ForegroundColor Gray
+Write-Host "  DATABASE MODE" -ForegroundColor Yellow
+Write-Host "  ---------------" -ForegroundColor Yellow
+$dbSuccess = @($results.Success | Where-Object { $_.DatabaseModeStatus -eq "Success" }).Count
+$dbFailed = @($results.Success | Where-Object { $_.DatabaseModeStatus -in @("Failed", "Error") }).Count
+Write-Host "  Tested: " -NoNewline -ForegroundColor Gray
+Write-Host $results.Success.Count -ForegroundColor White
+Write-Host "  Successful: " -NoNewline -ForegroundColor Gray
+Write-Host $dbSuccess -ForegroundColor Green
+Write-Host "  Failed: " -NoNewline -ForegroundColor Gray
+Write-Host $dbFailed -ForegroundColor Red
+Write-Host ""
+Write-Host "  OVERALL" -ForegroundColor Yellow
+Write-Host "  ---------------" -ForegroundColor Yellow
+Write-Host "  Discovery Success Rate: " -NoNewline -ForegroundColor Gray
 $successRate = if ($completedCount -gt 0) { [Math]::Round((($results.Success.Count) / $completedCount) * 100, 1) } else { 0 }
 Write-Host "$successRate%" -ForegroundColor $(if ($successRate -ge 95) { "Green" } elseif ($successRate -ge 80) { "Yellow" } else { "Red" })
+Write-Host "  Database Mode Success Rate: " -NoNewline -ForegroundColor Gray
+$dbSuccessRate = if ($results.Success.Count -gt 0) { [Math]::Round(($dbSuccess / $results.Success.Count) * 100, 1) } else { 0 }
+Write-Host "$dbSuccessRate%" -ForegroundColor $(if ($dbSuccessRate -ge 95) { "Green" } elseif ($dbSuccessRate -ge 80) { "Yellow" } else { "Red" })
 Write-Host ""
 Write-Host "  Total Duration: $([Math]::Round($totalDuration.TotalMinutes, 1)) minutes" -ForegroundColor Gray
 Write-Host ""
@@ -351,13 +436,20 @@ Repository: $RepositoryDirectory
 Total Resources: $completedCount
 Duration: $([Math]::Round($totalDuration.TotalMinutes, 1)) minutes
 
-SUMMARY
--------
+DISCOVERY MODE SUMMARY
+----------------------
 Successful: $($results.Success.Count)
 No Tests Found: $($results.NoTests.Count)
 Failed: $($results.Failed.Count)
 Errors: $($results.Errors.Count)
 Success Rate: $successRate%
+
+DATABASE MODE SUMMARY
+---------------------
+Tested: $($results.Success.Count)
+Successful: $dbSuccess
+Failed: $dbFailed
+Success Rate: $dbSuccessRate%
 
 "@
 
@@ -365,7 +457,7 @@ if ($results.Failed.Count -gt 0) {
     $reportContent += @"
 
 ============================================================
-FAILED RESOURCES ($($results.Failed.Count))
+FAILED RESOURCES - DISCOVERY MODE ($($results.Failed.Count))
 ============================================================
 
 "@
@@ -373,6 +465,23 @@ FAILED RESOURCES ($($results.Failed.Count))
         $reportContent += "- $($failure.Resource)`n"
         $reportContent += "  Error: $($failure.Message)`n"
         $reportContent += "  Log: $logsDir\$($failure.Resource).log`n`n"
+    }
+}
+
+if ($dbFailed -gt 0) {
+    $dbFailures = $results.Success | Where-Object { $_.DatabaseModeStatus -in @("Failed", "Error") }
+    $reportContent += @"
+
+============================================================
+FAILED RESOURCES - DATABASE MODE ($dbFailed)
+============================================================
+
+"@
+    foreach ($failure in ($dbFailures | Sort-Object Resource)) {
+        $reportContent += "- $($failure.Resource)`n"
+        $reportContent += "  Status: $($failure.DatabaseModeStatus)`n"
+        $reportContent += "  Message: $($failure.Message)`n"
+        $reportContent += "  Log: $logsDir\$($failure.Resource)-dbmode.log`n`n"
     }
 }
 
@@ -426,7 +535,7 @@ Write-Host "[INFO] Report saved to: $reportPath" -ForegroundColor Green
 Write-Host ""
 
 # Exit with appropriate code
-if ($results.Failed.Count -gt 0) {
+if ($results.Failed.Count -gt 0 -or $dbFailed -gt 0) {
     Write-Host "[WARNING] Some tests failed. Review the report for details." -ForegroundColor Yellow
     exit 1
 }

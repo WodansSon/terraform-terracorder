@@ -406,19 +406,10 @@ try {
 
     if (-not $IsDiscoveryMode) {
         #region DATABASE MODE
-        # Check if at least one query flag is specified
-        if (-not ($ShowDirectReferences -or $ShowIndirectReferences)) {
-            Write-Host ""
-            Write-Host "ERROR: " -ForegroundColor Red -NoNewline
-            Write-Host "Database Mode requires at least one query option (-ShowDirectReferences or -ShowIndirectReferences)" -ForegroundColor Yellow
-            Show-ComprehensiveHelp
-            exit 1
-        }
-
         # Import database from CSV files
         Import-DatabaseFromCSV -DatabaseDirectory $DatabaseDirectory -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor | Out-Null
 
-        # Execute requested query operations
+        # Execute requested query operations (or show statistics if no flags specified)
         if ($ShowDirectReferences) {
             Show-DirectReferences -NumberColor $Script:NumberColor -ItemColor $Script:ItemColor -BaseColor $Script:BaseColor -InfoColor $Script:InfoColor
         }

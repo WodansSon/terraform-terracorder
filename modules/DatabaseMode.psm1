@@ -395,8 +395,6 @@ function Show-TemplateFunctionDependencies {
                 # If different struct: r.method1 -> OtherStruct{}.method2
                 # For EXTERNAL_REFERENCE, show: r.method -> EXTERNAL_REFERENCE (keep suffix - shows unknown target)
                 # For SELF_CONTAINED, no arrow needed (no suffix - absence of arrow implies same file)
-                # For EXTERNAL_REFERENCE, show: r.method -> EXTERNAL_REFERENCE (keep suffix - shows unknown target)
-                # For SELF_CONTAINED, no arrow needed (no suffix - absence of arrow implies same file)
                 if ($fileRefTypeId -eq $REF_ID_CROSS_FILE -and $stepInfo.TargetTemplateInfo) {
                     # Target info was pre-joined from database
                     $targetStruct = $stepInfo.TargetTemplateInfo.Struct
