@@ -155,14 +155,36 @@ jobs:
 
     - name: Create Release Archive
       run: |
-        mkdir -p release
-        cp scripts/terracorder.ps1 release/
+        mkdir -p release/scripts
+        mkdir -p release/modules
+        mkdir -p release/tools/replicode
+
+        # Copy main script
+        cp scripts/terracorder.ps1 release/scripts/
+
+        # Copy all required modules
+        cp modules/Database.psm1 release/modules/
+        cp modules/DatabaseMode.psm1 release/modules/
+        cp modules/FileDiscovery.psm1 release/modules/
+        cp modules/ASTImport.psm1 release/modules/
+        cp modules/Prerequisites.psm1 release/modules/
+        cp modules/UI.psm1 release/modules/
+
+        # Copy Replicode binaries
+        cp tools/replicode/replicode release/tools/replicode/
+        cp tools/replicode/replicode.exe release/tools/replicode/
+
+        # Copy documentation
         cp README.md release/
         cp LICENSE release/
+        cp CHANGELOG.md release/
+        cp docs/DATABASE_SCHEMA.md release/ 2>/dev/null || true
 
-        # Create archives
+        # Create Linux/macOS archive (includes Linux binary)
         tar -czf terracorder-${{ steps.version.outputs.version }}-linux.tar.gz -C release .
-        zip -r terracorder-${{ steps.version.outputs.version }}-windows.zip release/
+
+        # Create Windows archive (includes Windows binary)
+        cd release && zip -r ../terracorder-${{ steps.version.outputs.version }}-windows.zip . && cd ..
 
     - name: Generate Release Notes from CHANGELOG
       id: release_notes
